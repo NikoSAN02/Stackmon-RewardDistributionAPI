@@ -1,0 +1,6 @@
+.env
+node_modules/
+logs/
+
+private_key_input.txt
+output_key.json
