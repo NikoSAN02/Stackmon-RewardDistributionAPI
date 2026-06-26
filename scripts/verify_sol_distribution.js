@@ -23,10 +23,10 @@ async function verifySolDistribution() {
         const amount = 0.1;
 
         console.log(`Attempting to transfer ${amount} SOL to ${recipient}...`);
-        const signature = await tokenService.transferTokens(recipient, amount);
+        const signature = await tokenService.transferSol(recipient, amount);
 
         if (signature === 'mock_signature_12345') {
-            console.log('✅ Verification SUCCEEDED: transferTokens called transferSol correctly.');
+            console.log('✅ Verification SUCCEEDED: transferSol called successfully.');
         } else {
             console.error('❌ Verification FAILED: Unexpected signature returned.');
         }

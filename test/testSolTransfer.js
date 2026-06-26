@@ -51,8 +51,8 @@ async function testSolTransfer() {
         const TokenService = require('../services/tokenService');
         const tokenService = new TokenService();
 
-        console.log('🔄 Invoking TokenService.transferTokens directly...');
-        const signature = await tokenService.transferTokens(recipientAddress, amountToTransfer);
+        console.log('🔄 Invoking TokenService.transferSol directly...');
+        const signature = await tokenService.transferSol(recipientAddress, amountToTransfer);
 
         console.log('✅ Transfer successful!');
         console.log(`📝 Signature: ${signature}`);

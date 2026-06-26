@@ -82,7 +82,7 @@ class RewardController {
       }
 
       // Perform the SOL transfer
-      const transactionSignature = await this.tokenService.transferTokens(address, finalRewardToDistribute);
+      const transactionSignature = await this.tokenService.transferSol(address, finalRewardToDistribute);
 
       res.status(200).json({
         success: true,
@@ -171,7 +171,7 @@ class RewardController {
       }
 
       // Perform the SOL transfer via Magicblock
-      const transactionSignature = await this.tokenService.transferTokensMagicblock(address, finalRewardToDistribute);
+      const transactionSignature = await this.tokenService.transferSolMagicblock(address, finalRewardToDistribute);
 
       res.status(200).json({
         success: true,
@@ -234,7 +234,7 @@ class RewardController {
       const recipients = value;
 
       // Perform batch SOL transfers
-      const results = await this.tokenService.transferTokensBatch(recipients);
+      const results = await this.tokenService.transferSolBatch(recipients);
 
       // Calculate summary
       const successfulTransfers = results.filter(r => r.success).length;
@@ -283,7 +283,6 @@ class RewardController {
         success: true,
         data: {
           balance: balance,
-          tokenMint: process.env.TOKEN_MINT_ADDRESS,
           serverWallet: this.tokenService.solanaService.getServerWallet().publicKey.toBase58()
         }
       });

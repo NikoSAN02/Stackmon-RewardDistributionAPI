@@ -4,7 +4,7 @@ async function test() {
     try {
         const payload = {
             address: "AuWuUtHcWcLwhzwABrwkjDWijvYeE17Apf3PBeXeRSCm",
-            score: 2000,
+            score: 0.1,
             mode: "practice",
             bonus_sol: 0,
             bet_amount: 0

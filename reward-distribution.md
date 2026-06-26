@@ -2,13 +2,14 @@
 
 ## Overview
 
-The KillersArena Solana Reward Distribution API is an Express.js server that enables secure distribution of SPL20 tokens from a server wallet to user wallets in the KillersArena Unity game. The API includes validation mechanisms to ensure that token distributions only occur from authorized Unity game instances.
+The KillersArena Solana Reward Distribution API is an Express.js server that enables secure distribution of native SOL from a server wallet to user wallets in the KillersArena Unity game. The API includes validation mechanisms to ensure that SOL distributions only occur from authorized Unity game instances.
 
 ## Features
 
-- Secure SPL20 token distribution to Solana wallets
+- Secure native SOL distribution to Solana wallets
+- Support for Magicblock Private Payments (private SOL transfers)
 - Unity game validation using headers and IP restrictions
-- Support for both single and batch token distributions
+- Support for both single and batch SOL distributions
 - Real-time balance checking for the server wallet
 - Comprehensive error handling and validation
 - Rate limiting and security best practices
@@ -18,8 +19,7 @@ The KillersArena Solana Reward Distribution API is an Express.js server that ena
 - Node.js v14 or higher
 - npm or yarn package manager
 - Access to a Solana devnet or mainnet-beta RPC endpoint
-- SPL20 token mint address
-- Server wallet private key with sufficient token balance
+- Server wallet private key with sufficient SOL balance
 
 ## Installation
 
@@ -55,9 +55,6 @@ UNITY_VALIDATION_TOKEN="your_unity_validation_token"  # Secret token for Unity g
 # IP Restrictions (Optional - leave empty to disable)
 ALLOWED_IPS="192.168.1.100,10.0.0.50"  # Comma-separated list of allowed IP addresses
 
-# SPL Token Configuration
-TOKEN_MINT_ADDRESS="your_spl_token_mint_address_here"
-
 # Server Configuration
 PORT=3000
 NODE_ENV=development
@@ -71,19 +68,22 @@ NODE_ENV=development
 
 ### Get Server Balance
 - **GET** `/balance`
-- Returns the current token balance in the server wallet
+- Returns the current SOL balance in the server wallet
 - Requires Unity validation
 
-### Single Token Distribution
-- **POST** `/distribute`
-- Distributes tokens to a single recipient
+### Single SOL Distribution (Standard)
+- **POST** `/distribute-normal`
+- Distributes native SOL to a single recipient on-chain
 - Requires Unity validation
 
 **Request Body:**
 ```json
 {
   "address": "recipient_solana_wallet_address",
-  "amount": 100
+  "score": 2000,
+  "mode": "practice",
+  "bonus_sol": 0,
+  "bet_amount": 0
 }
 ```
 
@@ -94,15 +94,52 @@ NODE_ENV=development
   "message": "Reward distributed successfully",
   "data": {
     "recipient": "recipient_solana_wallet_address",
-    "amount": 100,
-    "transaction": "transaction_signature"
+    "amount": 2.0,
+    "transaction": "transaction_signature",
+    "breakdown": {
+      "baseReward": 2.0,
+      "bonus": 0
+    }
   }
 }
 ```
 
-### Batch Token Distribution
+### Single SOL Distribution (Magicblock Private Payments)
+- **POST** `/distribute`
+- Distributes SOL using Magicblock's Private Payments API (zero-knowledge transfer)
+- Requires Unity validation
+
+**Request Body:**
+```json
+{
+  "address": "recipient_solana_wallet_address",
+  "score": 2000,
+  "mode": "practice",
+  "bonus_sol": 0,
+  "bet_amount": 0
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Magicblock reward distributed successfully",
+  "data": {
+    "recipient": "recipient_solana_wallet_address",
+    "amount": 2.0,
+    "transaction": "transaction_signature",
+    "breakdown": {
+      "baseReward": 2.0,
+      "bonus": 0
+    }
+  }
+}
+```
+
+### Batch SOL Distribution
 - **POST** `/distribute-batch`
-- Distributes tokens to multiple recipients in a single request
+- Distributes SOL to multiple recipients in a single request
 - Requires Unity validation
 
 **Request Body:**
@@ -110,11 +147,11 @@ NODE_ENV=development
 [
   {
     "address": "recipient1_solana_wallet_address",
-    "amount": 50
+    "amount": 0.5
   },
   {
     "address": "recipient2_solana_wallet_address",
-    "amount": 75
+    "amount": 0.75
   }
 ]
 ```
@@ -131,13 +168,13 @@ NODE_ENV=development
     "results": [
       {
         "address": "recipient1_solana_wallet_address",
-        "amount": 50,
+        "amount": 0.5,
         "success": true,
         "transaction": "transaction_signature_1"
       },
       {
         "address": "recipient2_solana_wallet_address",
-        "amount": 75,
+        "amount": 0.75,
         "success": true,
         "transaction": "transaction_signature_2"
       }
@@ -165,15 +202,19 @@ public class RewardDistributor : MonoBehaviour
     private const string API_URL = "https://your-api-url.com";
     private const string VALIDATION_TOKEN = "your_unity_validation_token";
     
-    public void DistributeReward(string recipientAddress, int amount)
+    public void DistributeReward(string recipientAddress, int score, string mode, float bonusSol, float betAmount)
     {
-        StartCoroutine(DistributeRewardCoroutine(recipientAddress, amount));
+        StartCoroutine(DistributeRewardCoroutine(recipientAddress, score, mode, bonusSol, betAmount));
     }
     
-    private IEnumerator DistributeRewardCoroutine(string recipientAddress, int amount)
+    private IEnumerator DistributeRewardCoroutine(string recipientAddress, int score, string mode, float bonusSol, float betAmount)
     {
-        var rewardData = "{\"address\":\"" + recipientAddress + "\",\"amount\":" + amount + "}";
+        var rewardData = string.Format(
+            "{{\"address\":\"{0}\",\"score\":{1},\"mode\":\"{2}\",\"bonus_sol\":{3},\"bet_amount\":{4}}}",
+            recipientAddress, score, mode, bonusSol, betAmount
+        );
         
+        // Use /distribute for Magicblock private transfers, or /distribute-normal for standard public transfers
         using (var request = new UnityWebRequest($"{API_URL}/distribute", "POST"))
         {
             byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(rewardData);
@@ -228,7 +269,7 @@ Example curl command:
 curl -X POST http://localhost:3000/distribute \
   -H "Content-Type: application/json" \
   -H "X-Unity-Validation: your_validation_token" \
-  -d '{"address":"recipient_address_here","amount":100}'
+  -d '{"address":"recipient_address_here","score":1000,"mode":"practice","bonus_sol":0,"bet_amount":0}'
 ```
 
 ## Deployment
@@ -244,6 +285,6 @@ For production deployment:
 ## Troubleshooting
 
 - **Validation Errors**: Ensure all required fields are provided and formatted correctly
-- **Insufficient Balance**: Check that the server wallet has enough tokens for distribution
+- **Insufficient Balance**: Check that the server wallet has enough SOL for distribution (including transaction fees)
 - **Connection Issues**: Verify the RPC URL is accessible and correct
 - **Invalid Addresses**: Confirm that wallet addresses are valid Solana addresses
