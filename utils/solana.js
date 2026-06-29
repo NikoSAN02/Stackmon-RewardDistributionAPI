@@ -408,81 +408,109 @@ class SolanaService {
   }
 
   /**
-   * Transfer SOL to a recipient using Magicblock's Private Payments API
+   * Transfer SOL or an SPL Token to a recipient using Magicblock's Private Payments API
    * @param {string} recipientAddress - Recipient's Solana wallet address
-   * @param {number} amount - Amount of SOL to transfer
+   * @param {number} amount - Amount of SOL or tokens to transfer
+   * @param {string} [tokenMintAddress] - Optional SPL token mint address
    * @returns {Promise<string>} Transaction signature
    */
-  async transferMagicblock(recipientAddress, amount) {
+  async transferMagicblock(recipientAddress, amount, tokenMintAddress) {
     try {
       // Validate inputs
       if (!this.isValidSolanaAddress(recipientAddress)) {
         throw new Error('Invalid recipient address');
       }
 
-      const lamports = Math.round(amount * LAMPORTS_PER_SOL);
+      let mintStr = "So11111111111111111111111111111111111111112"; // Default to WSOL
+      let decimals = 9; // SOL has 9 decimals
+      let isSol = true;
 
-      // Check balance
-      const balance = await this.connection.getBalance(this.serverWallet.publicKey);
-      if (balance < lamports + 5000) {
-        throw new Error(`Insufficient SOL balance. Available: ${balance / LAMPORTS_PER_SOL}, Required: ${amount} + fees`);
+      if (tokenMintAddress && this.isValidSolanaAddress(tokenMintAddress)) {
+        mintStr = tokenMintAddress;
+        decimals = await this.getMintDecimals(new PublicKey(tokenMintAddress));
+        isSol = false;
       }
 
-      // Request Magicblock API
-      const WSOL_MINT = new PublicKey("So11111111111111111111111111111111111111112");
-      const ata = await getAssociatedTokenAddress(WSOL_MINT, this.serverWallet.publicKey);
-      
-      const wsolInfo = await this.connection.getAccountInfo(ata);
-      let wsolBalance = 0;
-      if (wsolInfo) {
-          const tokenAccountBalance = await this.connection.getTokenAccountBalance(ata);
-          wsolBalance = parseInt(tokenAccountBalance.value.amount, 10);
-      }
+      const rawAmount = Math.round(amount * Math.pow(10, decimals));
 
-      // Check if we need to wrap more SOL
-      // Magicblock fees are 0.001 SOL (1,000,000 lamports) plus the transfer amount
-      // We also add a small margin of 0.01 SOL (10,000,000 lamports) to prevent exact boundary failures
-      const magicblockFee = 1000000;
-      const margin = 10000000;
-      const requiredWsol = lamports + magicblockFee + margin;
-      
-      if (wsolBalance < requiredWsol) {
-          const wrapAmount = requiredWsol - wsolBalance;
-          console.log(`Insufficient WSOL. Wrapping ${wrapAmount} lamports...`);
-          const wrapTx = new Transaction();
-          if (!wsolInfo) {
-              wrapTx.add(createAssociatedTokenAccountInstruction(
-                  this.serverWallet.publicKey,
-                  ata,
-                  this.serverWallet.publicKey,
-                  WSOL_MINT
-              ));
-          }
-          wrapTx.add(SystemProgram.transfer({
-              fromPubkey: this.serverWallet.publicKey,
-              toPubkey: ata,
-              lamports: wrapAmount
-          }));
-          wrapTx.add(createSyncNativeInstruction(ata));
+      if (isSol) {
+        // Check SOL balance
+        const balance = await this.connection.getBalance(this.serverWallet.publicKey);
+        if (balance < rawAmount + 5000) {
+          throw new Error(`Insufficient SOL balance. Available: ${balance / LAMPORTS_PER_SOL}, Required: ${amount} + fees`);
+        }
 
-          const sig = await this.connection.sendTransaction(wrapTx, [this.serverWallet]);
-          await this.connection.confirmTransaction(sig);
-          console.log(`WSOL Wrapped successfully. Signature: ${sig}`);
+        // Request Magicblock API
+        const WSOL_MINT = new PublicKey("So11111111111111111111111111111111111111112");
+        const ata = await getAssociatedTokenAddress(WSOL_MINT, this.serverWallet.publicKey);
+        
+        const wsolInfo = await this.connection.getAccountInfo(ata);
+        let wsolBalance = 0;
+        if (wsolInfo) {
+            const tokenAccountBalance = await this.connection.getTokenAccountBalance(ata);
+            wsolBalance = parseInt(tokenAccountBalance.value.amount, 10);
+        }
+
+        // Check if we need to wrap more SOL
+        const magicblockFee = 1000000;
+        const margin = 10000000;
+        const requiredWsol = rawAmount + magicblockFee + margin;
+        
+        if (wsolBalance < requiredWsol) {
+            const wrapAmount = requiredWsol - wsolBalance;
+            console.log(`Insufficient WSOL. Wrapping ${wrapAmount} lamports...`);
+            const wrapTx = new Transaction();
+            if (!wsolInfo) {
+                wrapTx.add(createAssociatedTokenAccountInstruction(
+                    this.serverWallet.publicKey,
+                    ata,
+                    this.serverWallet.publicKey,
+                    WSOL_MINT
+                ));
+            }
+            wrapTx.add(SystemProgram.transfer({
+                fromPubkey: this.serverWallet.publicKey,
+                toPubkey: ata,
+                lamports: wrapAmount
+            }));
+            wrapTx.add(createSyncNativeInstruction(ata));
+
+            const sig = await this.connection.sendTransaction(wrapTx, [this.serverWallet]);
+            await this.connection.confirmTransaction(sig);
+            console.log(`WSOL Wrapped successfully. Signature: ${sig}`);
+        }
+      } else {
+        // For SPL tokens, ensure the server has enough balance
+        const programId = await this.getMintProgramId(new PublicKey(tokenMintAddress));
+        const serverATA = await getOrCreateAssociatedTokenAccount(
+          this.connection,
+          this.serverWallet, // Payer
+          new PublicKey(tokenMintAddress),
+          this.serverWallet.publicKey, // Owner
+          true,
+          'confirmed',
+          undefined,
+          programId
+        );
+        const accountInfo = await this.connection.getTokenAccountBalance(serverATA.address);
+        if (BigInt(accountInfo.value.amount) < BigInt(rawAmount)) {
+          throw new Error(`Insufficient token balance. Available: ${accountInfo.value.uiAmount}, Required: ${amount}`);
+        }
       }
 
       const payload = {
         from: this.serverWallet.publicKey.toBase58(),
         to: recipientAddress,
-        mint: "So11111111111111111111111111111111111111112", // WSOL mint
-        amount: lamports,
+        mint: mintStr,
+        amount: rawAmount,
         visibility: "private",
         fromBalance: "base",
         toBalance: "base",
         cluster: this.network,
-        wrapAndUnwrapSol: true
+        wrapAndUnwrapSol: isSol
       };
 
-      console.log(`Requesting Magicblock transfer for ${amount} SOL to ${recipientAddress} via ${this.network}`);
+      console.log(`Requesting Magicblock transfer for ${amount} of ${mintStr} to ${recipientAddress} via ${this.network}`);
       const response = await axios.post('https://payments.magicblock.app/v1/spl/transfer', payload);
 
       if (!response.data || !response.data.transactionBase64) {
@@ -498,7 +526,6 @@ class SolanaService {
         signature = await this.connection.sendTransaction(versionedTransaction);
       } else {
         const transaction = Transaction.from(transactionBuffer);
-        // We only sign, we don't need to fetch blockhash as magicblock API returns a recent one
         transaction.sign(this.serverWallet);
         signature = await this.connection.sendRawTransaction(transaction.serialize());
       }

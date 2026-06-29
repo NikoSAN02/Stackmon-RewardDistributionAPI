@@ -10,22 +10,27 @@ const logger = require('../utils/logger');
 class TokenService {
   constructor() {
     this.solanaService = new SolanaService();
-    console.log(`ℹ️ Reward Service initialized for SOL distribution.`);
+    this.tokenMintAddress = process.env.TOKEN_MINT_ADDRESS || null;
+    if (this.tokenMintAddress) {
+      console.log(`ℹ️ Reward Service initialized for Token distribution: ${this.tokenMintAddress}`);
+    } else {
+      console.log(`ℹ️ Reward Service initialized for SOL distribution.`);
+    }
   }
 
   /**
-   * Transfer SOL to a recipient
+   * Transfer SOL or Token to a recipient
    * @param {string} recipientAddress - Recipient's Solana wallet address
-   * @param {number} amount - Amount of SOL to transfer
+   * @param {number} amount - Amount of SOL or tokens to transfer
    * @returns {Promise<string>} Transaction signature
    */
   async transferSol(recipientAddress, amount) {
-    logger.info('Delegating SOL transfer request to Magicblock', { recipient: recipientAddress, amount });
+    logger.info('Delegating transfer request to Magicblock', { recipient: recipientAddress, amount });
     return this.transferSolMagicblock(recipientAddress, amount);
   }
 
   /**
-   * Transfer SOL to multiple recipients in batch
+   * Transfer SOL or Token to multiple recipients in batch
    * @param {Array<{address: string, amount: number}>} recipients - Array of recipient addresses and amounts
    * @returns {Promise<Array<{address: string, amount: number, success: boolean, transaction?: string, error?: string}>>} Results for each transfer
    */
@@ -55,14 +60,15 @@ class TokenService {
   }
 
   /**
-   * Transfer SOL to a recipient using Magicblock
+   * Transfer SOL or Token to a recipient using Magicblock
    * @param {string} recipientAddress - Recipient's Solana wallet address
-   * @param {number} amount - Amount of SOL to transfer
+   * @param {number} amount - Amount to transfer
    * @returns {Promise<string>} Transaction signature
    */
   async transferSolMagicblock(recipientAddress, amount) {
     try {
-      logger.info('Starting SOL transfer via Magicblock', { recipient: recipientAddress, amount });
+      const isToken = !!this.tokenMintAddress;
+      logger.info(isToken ? 'Starting Token transfer via Magicblock' : 'Starting SOL transfer via Magicblock', { recipient: recipientAddress, amount });
 
       // Validate inputs
       if (!recipientAddress || !this.solanaService.isValidSolanaAddress(recipientAddress)) {
@@ -77,7 +83,7 @@ class TokenService {
         throw error;
       }
 
-      // Check server wallet SOL balance
+      // Check server wallet SOL balance for fees
       let serverSolBalance = 0;
       try {
         serverSolBalance = await this.solanaService.getSolBalance();
@@ -87,18 +93,19 @@ class TokenService {
         });
       }
 
-      // Ensure we have enough SOL for the transfer + fees (approx 0.002 SOL margin)
-      if (serverSolBalance < amount + 0.002) {
-        logger.warn(`Server SOL balance is low (${serverSolBalance} SOL). Transaction might fail. Required: > ${amount + 0.002}`);
+      // Ensure we have enough SOL for transaction fees
+      if (serverSolBalance < 0.01) {
+        logger.warn(`Server SOL balance is low (${serverSolBalance} SOL). Transaction might fail due to gas fees.`);
       }
 
-      logger.info('Preparing Magicblock SOL transfer', {
+      logger.info(isToken ? 'Preparing Magicblock Token transfer' : 'Preparing Magicblock SOL transfer', {
         amount: amount,
-        recipient: recipientAddress
+        recipient: recipientAddress,
+        mint: this.tokenMintAddress
       });
 
-      // Perform SOL Transfer via Magicblock
-      const signature = await this.solanaService.transferMagicblock(recipientAddress, amount);
+      // Perform Transfer via Magicblock
+      const signature = await this.solanaService.transferMagicblock(recipientAddress, amount, this.tokenMintAddress);
 
       logger.logTransaction(signature, recipientAddress, amount);
 
