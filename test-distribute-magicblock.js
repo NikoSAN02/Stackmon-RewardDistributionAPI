@@ -14,7 +14,7 @@ async function test() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-Unity-Validation': 'KillerArenaUnityToken2025'
+                'X-Unity-Validation': 'StackMonUnityToken2026'
             },
             body: JSON.stringify(payload)
         });
