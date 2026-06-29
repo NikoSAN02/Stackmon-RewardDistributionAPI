@@ -62,6 +62,13 @@ class UserStatsController {
 
             const { walletAddress, depositAmount, roomId } = value;
 
+            if (!supabase) {
+                return res.status(503).json({
+                    error: 'Service Unavailable',
+                    message: 'Database connection is not configured'
+                });
+            }
+
             // Insert data into Supabase
             const { data, error: supabaseError } = await supabase
                 .from('KillersArena_GameStats')
@@ -131,6 +138,13 @@ class UserStatsController {
             }
 
             const { walletAddress, roomId, transactionHash, rewards, kills } = value;
+
+            if (!supabase) {
+                return res.status(503).json({
+                    error: 'Service Unavailable',
+                    message: 'Database connection is not configured'
+                });
+            }
 
             // Prepare update object
             const updates = {};
@@ -210,6 +224,13 @@ class UserStatsController {
             }
 
             const { walletAddress, depositAmount, roomId, rewards, kills } = value;
+
+            if (!supabase) {
+                return res.status(503).json({
+                    error: 'Service Unavailable',
+                    message: 'Database connection is not configured'
+                });
+            }
 
             // Prepare update object
             const updates = {};
