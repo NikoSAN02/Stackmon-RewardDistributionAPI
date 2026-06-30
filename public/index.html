@@ -325,14 +325,21 @@
             </div>
         </div>
 
-        <button id="btn-claim" class="btn btn-primary" disabled>
-            <i data-lucide="gift" size="18"></i>
-            Claim USDC Reward
-        </button>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+            <button id="btn-claim" class="btn btn-primary" disabled>
+                <i data-lucide="shield" size="18"></i>
+                Claim Private USDC (Multi-Sig PER)
+            </button>
+
+            <button id="btn-claim-standard" class="btn btn-secondary" style="border-color: rgba(59, 130, 246, 0.3);" disabled>
+                <i data-lucide="send" size="18"></i>
+                Claim Standard USDC (Instant, No Signatures)
+            </button>
+        </div>
 
         <div class="info-box">
             <i data-lucide="info" size="18"></i>
-            <span>This demo will fetch a partially signed private transfer transaction from the backend, prompt your wallet to sign the delegation and transfer, and submit it directly to the MagicBlock Ephemeral Rollup.</span>
+            <span><strong>Private Claim:</strong> Prompts your wallet to sign the transaction to delegate your account to the MagicBlock PER rollup. <br><strong>Standard Claim:</strong> The backend signs and sends the USDC directly to your base Solana wallet with zero user setup (failsafe fallback).</span>
         </div>
 
         <!-- Success/Result Box -->
@@ -356,6 +363,7 @@
 
     const btnConnect = document.getElementById('btn-connect');
     const btnClaim = document.getElementById('btn-claim');
+    const btnClaimStandard = document.getElementById('btn-claim-standard');
     const walletBadge = document.getElementById('wallet-badge');
     const walletStatusText = document.getElementById('wallet-status-text');
     const scoreInput = document.getElementById('score-input');
@@ -401,6 +409,7 @@
             walletStatusText.textContent = `Connected: ${userPublicKey.slice(0, 4)}...${userPublicKey.slice(-4)}`;
             btnConnect.style.display = 'none';
             btnClaim.disabled = false;
+            btnClaimStandard.disabled = false;
             
             console.log('Connected wallet:', userPublicKey);
         } catch (err) {
@@ -500,7 +509,56 @@
             alert(`Claim failed: ${err.message}`);
         } finally {
             btnClaim.disabled = false;
-            btnClaim.innerHTML = '<i data-lucide="gift" size="18"></i> Claim USDC Reward';
+            btnClaim.innerHTML = '<i data-lucide="shield" size="18"></i> Claim Private USDC (Multi-Sig PER)';
+            lucide.createIcons();
+        }
+    }
+
+    // Standard Claim (Instant)
+    async function claimRewardStandard() {
+        if (!userPublicKey) return;
+
+        try {
+            btnClaimStandard.disabled = true;
+            btnClaimStandard.innerHTML = '<div class="loader"></div> Processing...';
+            resultBox.style.display = 'none';
+
+            console.log('Requesting standard reward transfer from backend...');
+            const response = await fetch('/distribute-normal', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Unity-Validation': 'StackMonUnityToken2026'
+                },
+                body: JSON.stringify({
+                    address: userPublicKey,
+                    score: parseInt(scoreInput.value, 10),
+                    mode: 'practice',
+                    bonus_sol: 0,
+                    bet_amount: 0
+                })
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.message || 'Failed to distribute reward');
+            }
+
+            const data = await response.json();
+            console.log('Reward response:', data);
+
+            // Display success UI
+            resAmount.textContent = data.data.amount;
+            resTx.textContent = `${data.data.transaction.slice(0, 8)}...${data.data.transaction.slice(-8)}`;
+            resTx.href = `https://explorer.solana.com/tx/${data.data.transaction}?cluster=devnet`;
+            resultBox.style.display = 'flex';
+
+        } catch (err) {
+            console.error('Standard claim failed:', err);
+            alert(`Standard claim failed: ${err.message}`);
+        } finally {
+            btnClaimStandard.disabled = false;
+            btnClaimStandard.innerHTML = '<i data-lucide="send" size="18"></i> Claim Standard USDC (Instant, No Signatures)';
             lucide.createIcons();
         }
     }
@@ -508,6 +566,7 @@
     // Setup event listeners
     btnConnect.addEventListener('click', connectWallet);
     btnClaim.addEventListener('click', claimReward);
+    btnClaimStandard.addEventListener('click', claimRewardStandard);
 
     // Auto-connect if already authorized (wait slightly for injection)
     window.addEventListener('load', () => {
@@ -521,6 +580,7 @@
                         walletStatusText.textContent = `Connected: ${userPublicKey.slice(0, 4)}...${userPublicKey.slice(-4)}`;
                         btnConnect.style.display = 'none';
                         btnClaim.disabled = false;
+                        btnClaimStandard.disabled = false;
                     })
                     .catch(() => {});
             }

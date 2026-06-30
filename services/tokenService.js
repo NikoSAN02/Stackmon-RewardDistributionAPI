@@ -107,6 +107,24 @@ class TokenService {
 
       return signature;
     } catch (error) {
+      const errorMsg = error.message || '';
+      const isUndelegated = errorMsg.includes('not deposited') || 
+                            errorMsg.includes('not delegated') || 
+                            errorMsg.includes('InvalidAccountData') || 
+                            errorMsg.includes('DelegationRecord');
+      
+      if (isUndelegated) {
+        logger.warn(`Magicblock private transfer failed because recipient is not delegated (${errorMsg}). Falling back to standard SPL transfer.`);
+        try {
+          const fallbackSig = await this.solanaService.transferSplToken(recipientAddress, amount, this.tokenMintAddress);
+          logger.info('Standard SPL transfer fallback successful', { signature: fallbackSig });
+          return fallbackSig;
+        } catch (fallbackError) {
+          logger.error('Standard SPL transfer fallback failed', { error: fallbackError.message });
+          throw fallbackError;
+        }
+      }
+
       logger.logTransactionError(recipientAddress, amount, error);
       throw error;
     }
