@@ -66,6 +66,9 @@ app.options('*', cors());
 // Parse JSON bodies
 app.use(express.json({ limit: '10mb' }));
 
+// Serve static demo files
+app.use(express.static('public'));
+
 // Log incoming requests
 app.use((req, res, next) => {
   logger.info('Incoming request', {
@@ -96,6 +99,11 @@ app.post('/distribute-normal', unityValidationMiddleware, (req, res) => {
 // Single Magicblock reward distribution endpoint
 app.post('/distribute', unityValidationMiddleware, (req, res) => {
   rewardController.distributeMagicblockReward(req, res);
+});
+
+// Single Magicblock reward distribution setup (multi-signature flow)
+app.post('/distribute-private-setup', unityValidationMiddleware, (req, res) => {
+  rewardController.distributePrivateSetup(req, res);
 });
 
 // Batch reward distribution endpoint

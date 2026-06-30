@@ -111,6 +111,22 @@ class TokenService {
       throw error;
     }
   }
+
+  /**
+   * Set up a private transfer that will be partially signed by the server
+   * @param {string} recipientAddress - Recipient's Solana wallet address
+   * @param {number} amount - Amount of USDC to transfer (UI amount)
+   * @returns {Promise<Object>} Partially signed transaction and metadata
+   */
+  async setupPrivateTransfer(recipientAddress, amount) {
+    try {
+      logger.info('Setting up partially signed private transfer', { recipient: recipientAddress, amount });
+      return await this.solanaService.setupPrivateTransfer(recipientAddress, amount, this.tokenMintAddress);
+    } catch (error) {
+      logger.error('Failed to set up private transfer', { recipient: recipientAddress, amount, error: error.message });
+      throw error;
+    }
+  }
 }
 
 module.exports = TokenService;

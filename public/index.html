@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StackMon Reward Portal</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@solana/web3.js@1.91.8/lib/index.iife.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: rgba(17, 24, 39, 0.7);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --text-primary: #ffffff;
+            --text-secondary: #9ca3af;
+            --accent-color: #3b82f6;
+            --accent-glow: rgba(59, 130, 246, 0.5);
+            --success-color: #10b981;
+            --success-glow: rgba(16, 185, 129, 0.3);
+            --error-color: #ef4444;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(59, 130, 246, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(16, 185, 129, 0.05) 0%, transparent 40%);
+        }
+
+        .container {
+            width: 100%;
+            max-width: 480px;
+            padding: 24px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 24px;
+            padding: 32px;
+            backdrop-filter: blur(16px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            position: relative;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--accent-color), var(--success-color));
+            border-radius: 24px 24px 0 0;
+        }
+
+        .header {
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .logo-container {
+            width: 64px;
+            height: 64px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: var(--accent-color);
+            margin-bottom: 8px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+        }
+
+        h1 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 28px;
+            font-weight: 600;
+            letter-spacing: -0.5px;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 100px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            align-self: center;
+        }
+
+        .status-badge.connected {
+            background: rgba(16, 185, 129, 0.08);
+            border-color: rgba(16, 185, 129, 0.2);
+            color: var(--success-color);
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .input-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .input-icon {
+            position: absolute;
+            left: 16px;
+            color: var(--text-secondary);
+        }
+
+        input {
+            width: 100%;
+            padding: 14px 16px 14px 44px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            color: var(--text-primary);
+            font-size: 15px;
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        input:focus {
+            border-color: var(--accent-color);
+            box-shadow: 0 0 0 4px var(--accent-glow);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: 14px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--accent-color);
+            color: var(--text-primary);
+            box-shadow: 0 4px 12px var(--accent-glow);
+        }
+
+        .btn-primary:hover {
+            background: #2563eb;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .info-box {
+            background: rgba(59, 130, 246, 0.04);
+            border: 1px solid rgba(59, 130, 246, 0.1);
+            border-radius: 16px;
+            padding: 16px;
+            font-size: 13px;
+            line-height: 1.5;
+            color: var(--text-secondary);
+            display: flex;
+            gap: 12px;
+        }
+
+        .info-box i {
+            color: var(--accent-color);
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .result-box {
+            background: rgba(16, 185, 129, 0.04);
+            border: 1px solid rgba(16, 185, 129, 0.15);
+            border-radius: 16px;
+            padding: 20px;
+            display: none;
+            flex-direction: column;
+            gap: 12px;
+            animation: fadeIn 0.3s ease-out forwards;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .result-title {
+            color: var(--success-color);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 15px;
+        }
+
+        .result-details {
+            font-size: 13px;
+            color: var(--text-secondary);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 12px;
+            border-radius: 8px;
+            word-break: break-all;
+        }
+
+        .tx-link {
+            color: var(--accent-color);
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .tx-link:hover {
+            text-decoration: underline;
+        }
+
+        .loader {
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-top: 2px solid var(--text-primary);
+            border-radius: 50%;
+            width: 18px;
+            height: 18px;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="card">
+        <div class="header">
+            <div class="logo-container">
+                <i data-lucide="shield-check" size="32"></i>
+            </div>
+            <h1>Claim Rewards</h1>
+            <span class="subtitle">Private USDC Distribution via MagicBlock PER</span>
+        </div>
+
+        <div id="wallet-badge" class="status-badge">
+            <i data-lucide="wallet" size="14"></i>
+            <span id="wallet-status-text">Wallet Disconnected</span>
+        </div>
+
+        <!-- Connect Wallet Button -->
+        <button id="btn-connect" class="btn btn-secondary">
+            <i data-lucide="log-in" size="18"></i>
+            Connect Phantom Wallet
+        </button>
+
+        <!-- Form for claiming -->
+        <div class="form-group">
+            <label for="score-input">Mock Score (For Reward Calculation)</label>
+            <div class="input-wrapper">
+                <i data-lucide="trophy" class="input-icon" size="18"></i>
+                <input type="number" id="score-input" value="100" min="1">
+            </div>
+        </div>
+
+        <button id="btn-claim" class="btn btn-primary" disabled>
+            <i data-lucide="gift" size="18"></i>
+            Claim USDC Reward
+        </button>
+
+        <div class="info-box">
+            <i data-lucide="info" size="18"></i>
+            <span>This demo will fetch a partially signed private transfer transaction from the backend, prompt your wallet to sign the delegation and transfer, and submit it directly to the MagicBlock Ephemeral Rollup.</span>
+        </div>
+
+        <!-- Success/Result Box -->
+        <div id="result-box" class="result-box">
+            <div class="result-title">
+                <i data-lucide="check-circle" size="18"></i>
+                <span>Claim Successful!</span>
+            </div>
+            <div class="result-details">
+                <div><strong>Amount Claimed:</strong> <span id="res-amount">0.00</span> USDC</div>
+                <div><strong>Transaction Signature:</strong></div>
+                <a id="res-tx" class="tx-link" href="#" target="_blank"></a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Initialize Lucide icons
+    lucide.createIcons();
+
+    const btnConnect = document.getElementById('btn-connect');
+    const btnClaim = document.getElementById('btn-claim');
+    const walletBadge = document.getElementById('wallet-badge');
+    const walletStatusText = document.getElementById('wallet-status-text');
+    const scoreInput = document.getElementById('score-input');
+    const resultBox = document.getElementById('result-box');
+    const resAmount = document.getElementById('res-amount');
+    const resTx = document.getElementById('res-tx');
+
+    let userPublicKey = null;
+
+    // Check if Phantom is installed
+    const isPhantomInstalled = window.solana && window.solana.isPhantom;
+
+    // Connect Wallet
+    async function connectWallet() {
+        if (!isPhantomInstalled) {
+            alert('Phantom Wallet not found! Please install the Phantom extension.');
+            window.open('https://phantom.app/', '_blank');
+            return;
+        }
+
+        try {
+            btnConnect.disabled = true;
+            btnConnect.innerHTML = '<div class="loader"></div> Connecting...';
+            
+            const response = await window.solana.connect();
+            userPublicKey = response.publicKey.toString();
+            
+            // Update UI
+            walletBadge.classList.add('connected');
+            walletStatusText.textContent = `Connected: ${userPublicKey.slice(0, 4)}...${userPublicKey.slice(-4)}`;
+            btnConnect.style.display = 'none';
+            btnClaim.disabled = false;
+            
+            console.log('Connected wallet:', userPublicKey);
+        } catch (err) {
+            console.error('Wallet connection failed:', err);
+            btnConnect.disabled = false;
+            btnConnect.innerHTML = '<i data-lucide="log-in" size="18"></i> Connect Phantom Wallet';
+            lucide.createIcons();
+        }
+    }
+
+    // Claim Reward
+    async function claimReward() {
+        if (!userPublicKey) return;
+
+        try {
+            btnClaim.disabled = true;
+            btnClaim.innerHTML = '<div class="loader"></div> Processing...';
+            resultBox.style.display = 'none';
+
+            // Step 1: Request partially signed transaction from backend
+            console.log('Requesting transfer setup from backend...');
+            const setupResponse = await fetch('/distribute-private-setup', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Unity-Validation': 'StackMonUnityToken2026' // Matches our backend validation
+                },
+                body: JSON.stringify({
+                    address: userPublicKey,
+                    score: parseInt(scoreInput.value, 10),
+                    mode: 'practice',
+                    bonus_sol: 0,
+                    bet_amount: 0
+                })
+            });
+
+            if (!setupResponse.ok) {
+                const errData = await setupResponse.json();
+                throw new Error(errData.message || 'Failed to set up transfer');
+            }
+
+            const setupData = await setupResponse.json();
+            console.log('Backend setup response:', setupData);
+
+            const { transaction: txBase64, version, sendRpcEndpoint } = setupData.data;
+
+            // Step 2: Deserialize and sign transaction in browser
+            console.log('Deserializing transaction...');
+            const transactionBuffer = Uint8Array.from(atob(txBase64), c => c.charCodeAt(0));
+            
+            let signedTransaction;
+            if (version === 'v0') {
+                const tx = solanaWeb3.VersionedTransaction.deserialize(transactionBuffer);
+                console.log('Signing VersionedTransaction with Phantom...');
+                signedTransaction = await window.solana.signTransaction(tx);
+            } else {
+                const tx = solanaWeb3.Transaction.from(transactionBuffer);
+                console.log('Signing Legacy Transaction with Phantom...');
+                signedTransaction = await window.solana.signTransaction(tx);
+            }
+
+            // Step 3: Submit signed transaction to MagicBlock Ephemeral RPC
+            console.log(`Submitting signed transaction to MagicBlock RPC: ${sendRpcEndpoint}...`);
+            const connection = new solanaWeb3.Connection(sendRpcEndpoint, 'confirmed');
+            
+            let signature;
+            if (version === 'v0') {
+                signature = await connection.sendTransaction(signedTransaction, { skipPreflight: true });
+            } else {
+                signature = await connection.sendRawTransaction(signedTransaction.serialize(), { skipPreflight: true });
+            }
+
+            console.log('Transaction submitted. Signature:', signature);
+            btnClaim.innerHTML = '<div class="loader"></div> Confirming...';
+
+            // Step 4: Confirm transaction
+            const latestBlock = await connection.getLatestBlockhash();
+            await connection.confirmTransaction({
+                blockhash: latestBlock.blockhash,
+                lastValidBlockHeight: latestBlock.lastValidBlockHeight,
+                signature: signature
+            });
+
+            console.log('Transaction confirmed successfully!');
+
+            // Display success UI
+            resAmount.textContent = setupData.data.amount;
+            resTx.textContent = `${signature.slice(0, 8)}...${signature.slice(-8)}`;
+            resTx.href = `https://explorer.solana.com/tx/${signature}?cluster=custom&customUrl=${encodeURIComponent(sendRpcEndpoint)}`;
+            resultBox.style.display = 'flex';
+
+        } catch (err) {
+            console.error('Claim flow failed:', err);
+            alert(`Claim failed: ${err.message}`);
+        } finally {
+            btnClaim.disabled = false;
+            btnClaim.innerHTML = '<i data-lucide="gift" size="18"></i> Claim USDC Reward';
+            lucide.createIcons();
+        }
+    }
+
+    // Setup event listeners
+    btnConnect.addEventListener('click', connectWallet);
+    btnClaim.addEventListener('click', claimReward);
+
+    // Auto-connect if already authorized
+    if (isPhantomInstalled) {
+        window.solana.connect({ onlyIfTrusted: true })
+            .then(response => {
+                userPublicKey = response.publicKey.toString();
+                walletBadge.classList.add('connected');
+                walletStatusText.textContent = `Connected: ${userPublicKey.slice(0, 4)}...${userPublicKey.slice(-4)}`;
+                btnConnect.style.display = 'none';
+                btnClaim.disabled = false;
+            })
+            .catch(() => {});
+    }
+</script>
+
+</body>
+</html>

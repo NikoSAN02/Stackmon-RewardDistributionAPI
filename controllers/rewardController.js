@@ -297,6 +297,89 @@ class RewardController {
       });
     }
   }
+
+  /**
+   * Sets up a private transfer for a user (calculates rewards, fetches unsigned transaction from Magicblock, and partially signs it as the server)
+   */
+  async distributePrivateSetup(req, res) {
+    try {
+      logger.info('Processing single private reward setup request', {
+        ip: req.ip,
+        userAgent: req.get('User-Agent'),
+        body: req.body
+      });
+
+      // Validate request body
+      const { error, value } = singleRewardSchema.validate(req.body);
+      if (error) {
+        logger.warn('Validation failed for single private reward setup', {
+          error: error.details[0].message,
+          body: req.body
+        });
+
+        return res.status(400).json({
+          error: 'Validation Error',
+          message: error.details[0].message
+        });
+      }
+
+      const { address, score, mode, bonus_sol, bet_amount } = value;
+
+      let calculatedReward = 0;
+
+      // Calculate the Base Reward based on the Game Mode (identical to standard endpoint)
+      if (mode === "practice") {
+          calculatedReward = score * 0.01;
+      } 
+      else if (mode === "bot") {
+          calculatedReward = score * 0.005;
+      } 
+      else if (mode === "ranked") {
+          calculatedReward = bet_amount * 1.8;
+      }
+
+      // Add the Combo Multiplier Bonus
+      const finalRewardToDistribute = calculatedReward + bonus_sol;
+
+      if (finalRewardToDistribute <= 0) {
+        return res.status(400).json({
+          error: 'Bad Request',
+          message: 'Calculated reward must be greater than 0'
+        });
+      }
+
+      // Set up the transfer and sign partially
+      const result = await this.tokenService.setupPrivateTransfer(address, finalRewardToDistribute);
+
+      res.status(200).json({
+        success: true,
+        message: 'Private transfer transaction successfully set up and partially signed',
+        data: {
+          ...result,
+          breakdown: {
+            baseReward: calculatedReward,
+            bonus: bonus_sol
+          }
+        }
+      });
+
+      logger.info('Single private reward setup completed', {
+        recipient: address,
+        amount: finalRewardToDistribute
+      });
+    } catch (error) {
+      logger.error('Error setting up single private reward transfer', {
+        error: error.message,
+        body: req.body,
+        ip: req.ip
+      });
+
+      res.status(500).json({
+        error: 'Internal Server Error',
+        message: error.message
+      });
+    }
+  }
 }
 
 module.exports = RewardController;

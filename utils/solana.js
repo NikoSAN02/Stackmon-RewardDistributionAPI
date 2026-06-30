@@ -921,7 +921,7 @@ class SolanaService {
         amount: rawAmount,
         visibility: "private",
         fromBalance: "ephemeral",
-        toBalance: "ephemeral",
+        toBalance: "base",
         cluster: this.network,
         wrapAndUnwrapSol: false,
         initIfMissing: true,
@@ -1024,6 +1024,100 @@ class SolanaService {
 
       console.error('Error in transferMagicblock:', error?.response?.data || error);
       throw new Error(`Failed to transfer via Magicblock: ${errorDetail}`);
+    }
+  }
+
+  /**
+   * Set up a private transfer that will be partially signed by the server
+   * and returned to the client for the final signature (user's wallet).
+   * 
+   * @param {string} recipientAddress - Recipient's Solana wallet address
+   * @param {number} amount - Amount of USDC to transfer (UI amount)
+   * @param {string} [tokenMintAddress] - Optional SPL token mint address
+   * @returns {Promise<Object>} Partially signed transaction and metadata
+   */
+  async setupPrivateTransfer(recipientAddress, amount, tokenMintAddress) {
+    this.checkInit();
+    try {
+      if (!this.isValidSolanaAddress(recipientAddress)) {
+        throw new Error('Invalid recipient address');
+      }
+
+      const mintStr = tokenMintAddress || USDC_DEVNET_MINT;
+      const decimals = await this.getMintDecimals(new PublicKey(mintStr));
+      const rawAmount = Math.round(amount * Math.pow(10, decimals));
+
+      if (rawAmount <= 0) {
+        throw new Error(`Transfer amount must be positive. Got: ${amount}`);
+      }
+
+      // Check & top-up server's ephemeral balance
+      let ephemeralBalance;
+      try {
+        ephemeralBalance = await this.getMagicblockPrivateBalance(mintStr);
+      } catch (balanceErr) {
+        ephemeralBalance = null;
+      }
+
+      if (ephemeralBalance !== null && ephemeralBalance < rawAmount) {
+        const shortfall = rawAmount - ephemeralBalance;
+        const depositAmount = Math.max(shortfall, MIN_DEPOSIT_AMOUNT);
+
+        console.log(`📉 Ephemeral balance (${ephemeralBalance}) < required (${rawAmount}). Depositing ${depositAmount} base units...`);
+        await this.depositToMagicblockPER(depositAmount, mintStr);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+
+      // Request the transfer transaction from Magicblock
+      const payload = {
+        from: this.serverWallet.publicKey.toBase58(),
+        to: recipientAddress,
+        mint: mintStr,
+        amount: rawAmount,
+        visibility: "private",
+        fromBalance: "ephemeral",
+        toBalance: "base", // Settle directly to user's base wallet
+        cluster: this.network,
+        wrapAndUnwrapSol: false,
+        initIfMissing: true,
+        initAtasIfMissing: true,
+        initVaultIfMissing: true
+      };
+
+      console.log(`📤 Requesting Magicblock private transfer setup...`);
+      const response = await axios.post(`${MAGICBLOCK_API_URL}/v1/spl/transfer`, payload);
+
+      if (!response.data || !response.data.transactionBase64) {
+        throw new Error('Invalid response from Magicblock transfer API');
+      }
+
+      const transactionBuffer = Buffer.from(response.data.transactionBase64, 'base64');
+      let signedTxBase64;
+
+      // Partially sign the transaction as the sender (server wallet)
+      if (response.data.version === 'v0') {
+        const versionedTransaction = VersionedTransaction.deserialize(transactionBuffer);
+        versionedTransaction.sign([this.serverWallet]);
+        signedTxBase64 = Buffer.from(versionedTransaction.serialize()).toString('base64');
+      } else {
+        const transaction = Transaction.from(transactionBuffer);
+        transaction.partialSign(this.serverWallet);
+        signedTxBase64 = transaction.serialize({ requireAllSignatures: false }).toString('base64');
+      }
+
+      return {
+        transaction: signedTxBase64,
+        version: response.data.version,
+        sendRpcEndpoint: response.data.sendRpcEndpoint || 'https://devnet.magicblock.app',
+        requiredSigners: response.data.requiredSigners,
+        amount: amount,
+        recipient: recipientAddress
+      };
+    } catch (error) {
+      const apiErrorMsg = error?.response?.data?.error?.message || error?.response?.data?.message;
+      const errorDetail = apiErrorMsg || error.message;
+      console.error('Error in setupPrivateTransfer:', error?.response?.data || error);
+      throw new Error(`Failed to set up Magicblock transfer: ${errorDetail}`);
     }
   }
 }
