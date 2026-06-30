@@ -830,6 +830,64 @@ class SolanaService {
   // ─── Magicblock Private Payments: Ephemeral Transfer ───────────────────
 
   /**
+   * Initializes and delegates the transfer queue for a mint if it is not already initialized.
+   * This is a one-time setup per mint+validator pair.
+   * @param {string} mintAddress 
+   */
+  async initializeMintIfNeeded(mintAddress) {
+    this.checkInit();
+    const mintStr = mintAddress || USDC_DEVNET_MINT;
+    try {
+      console.log(`Checking if mint ${mintStr} is initialized on Magicblock...`);
+      const checkRes = await axios.get(`${MAGICBLOCK_API_URL}/v1/spl/is-mint-initialized`, {
+        params: { mint: mintStr, cluster: this.network }
+      });
+
+      if (checkRes.data && checkRes.data.initialized) {
+        console.log(`✅ Mint ${mintStr} is already initialized on Magicblock`);
+        return;
+      }
+
+      console.log(`⚠️ Mint ${mintStr} is not initialized on Magicblock. Running initialization...`);
+      const initPayload = {
+        payer: this.serverWallet.publicKey.toBase58(),
+        mint: mintStr,
+        cluster: this.network
+      };
+
+      const response = await axios.post(`${MAGICBLOCK_API_URL}/v1/spl/initialize-mint`, initPayload);
+      if (!response.data || !response.data.transactionBase64) {
+        throw new Error('Invalid response from Magicblock initialize-mint API');
+      }
+
+      const transactionBuffer = Buffer.from(response.data.transactionBase64, 'base64');
+      
+      let signature;
+      if (response.data.version === 'v0') {
+        const versionedTransaction = VersionedTransaction.deserialize(transactionBuffer);
+        versionedTransaction.sign([this.serverWallet]);
+        signature = await this.connection.sendTransaction(versionedTransaction, { skipPreflight: true });
+      } else {
+        const transaction = Transaction.from(transactionBuffer);
+        transaction.sign(this.serverWallet);
+        signature = await this.connection.sendRawTransaction(transaction.serialize(), { skipPreflight: true });
+      }
+
+      const latestBlockHash = await this.connection.getLatestBlockhash();
+      await this.connection.confirmTransaction({
+        blockhash: latestBlockHash.blockhash,
+        lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+        signature,
+      });
+
+      console.log(`✅ Mint ${mintStr} successfully initialized on Magicblock. Signature: ${signature}`);
+    } catch (error) {
+      const apiErrorMsg = error?.response?.data?.error?.message || error?.response?.data?.message;
+      console.error(`❌ Failed to initialize mint ${mintStr} on Magicblock:`, apiErrorMsg || error.message);
+    }
+  }
+
+  /**
    * Transfer USDC to a recipient using Magicblock's Private Payments API.
    * Uses ephemeral-to-ephemeral transfer for full privacy.
    *
@@ -855,6 +913,9 @@ class SolanaService {
       const mintStr = (tokenMintAddress && this.isValidSolanaAddress(tokenMintAddress))
         ? tokenMintAddress
         : USDC_DEVNET_MINT;
+
+      // Ensure the mint is initialized before transfer
+      await this.initializeMintIfNeeded(mintStr);
 
       // Get decimals for the mint (USDC = 6)
       const decimals = await this.getMintDecimals(new PublicKey(mintStr));
@@ -924,9 +985,9 @@ class SolanaService {
         toBalance: "base",
         cluster: this.network,
         wrapAndUnwrapSol: false,
-        initIfMissing: true,
+        initIfMissing: false,
         initAtasIfMissing: true,
-        initVaultIfMissing: true
+        initVaultIfMissing: false
       };
 
       console.log(`📤 Requesting Magicblock private transfer...`);
@@ -1044,6 +1105,10 @@ class SolanaService {
       }
 
       const mintStr = tokenMintAddress || USDC_DEVNET_MINT;
+
+      // Ensure the mint is initialized before transfer
+      await this.initializeMintIfNeeded(mintStr);
+
       const decimals = await this.getMintDecimals(new PublicKey(mintStr));
       const rawAmount = Math.round(amount * Math.pow(10, decimals));
 
@@ -1079,9 +1144,9 @@ class SolanaService {
         toBalance: "base", // Settle directly to user's base wallet
         cluster: this.network,
         wrapAndUnwrapSol: false,
-        initIfMissing: true,
+        initIfMissing: false,
         initAtasIfMissing: true,
-        initVaultIfMissing: true
+        initVaultIfMissing: false
       };
 
       console.log(`📤 Requesting Magicblock private transfer setup...`);
