@@ -36,7 +36,7 @@ app.use(helmet({
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: ["'self'", "data:", "validator.swagger.io"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "https://unpkg.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://unpkg.com", "https://cdn.jsdelivr.net"],
       fontSrc: ["'self'", "https:", "data:", "https://fonts.gstatic.com"],
       connectSrc: ["'self'", "https:", "wss:"],
     },
@@ -68,8 +68,8 @@ app.options('*', cors());
 // Parse JSON bodies
 app.use(express.json({ limit: '10mb' }));
 
-// Serve static demo files
-app.use(express.static('public'));
+// Serve static demo files (absolute path)
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Log incoming requests
 app.use((req, res, next) => {

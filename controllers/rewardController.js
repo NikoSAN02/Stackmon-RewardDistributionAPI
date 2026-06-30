@@ -1,6 +1,7 @@
 const TokenService = require('../services/tokenService');
 const Joi = require('joi');
 const logger = require('../utils/logger');
+const { PublicKey } = require('@solana/web3.js');
 
 // Validation schema for single reward request
 const singleRewardSchema = Joi.object({
@@ -277,17 +278,38 @@ class RewardController {
     try {
       logger.info('Balance check requested', { ip: req.ip });
 
-      const balance = await this.tokenService.solanaService.getSolBalance();
+      const solanaService = this.tokenService.solanaService;
+      const serverWalletPubkey = solanaService.getServerWallet().publicKey;
+
+      const solBalance = await solanaService.getSolBalance();
+
+      const USDC_DEVNET_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
+      let baseUsdcBalance = 0;
+      try {
+        baseUsdcBalance = await solanaService.getServerTokenBalance(USDC_DEVNET_MINT);
+      } catch (err) {
+        logger.warn('Error fetching server base USDC balance', { error: err.message });
+      }
+
+      let ephemeralUsdcBalance = 0;
+      try {
+        const rawPrivateBalance = await solanaService.getMagicblockPrivateBalance();
+        ephemeralUsdcBalance = rawPrivateBalance / 1_000_000; // Convert base units to USDC UI amount
+      } catch (err) {
+        logger.warn('Error fetching server ephemeral USDC balance', { error: err.message });
+      }
 
       res.status(200).json({
         success: true,
         data: {
-          balance: balance,
-          serverWallet: this.tokenService.solanaService.getServerWallet().publicKey.toBase58()
+          serverWallet: serverWalletPubkey.toBase58(),
+          solBalance,
+          baseUsdcBalance,
+          ephemeralUsdcBalance
         }
       });
 
-      logger.info('Balance check completed', { balance });
+      logger.info('Balance check completed', { solBalance, baseUsdcBalance, ephemeralUsdcBalance });
     } catch (error) {
       logger.error('Error getting balance', { error: error.message, ip: req.ip });
 
