@@ -36,26 +36,26 @@ const MIN_DEPOSIT_AMOUNT = 5_000_000;
 
 class SolanaService {
   constructor() {
-    // Initialize connection based on network
-    const network = process.env.SOLANA_NETWORK || 'devnet';
-    const rpcUrl = process.env.SOLANA_RPC_URL || clusterApiUrl(network);
+    try {
+      // Initialize connection based on network
+      const network = process.env.SOLANA_NETWORK || 'devnet';
+      const rpcUrl = process.env.SOLANA_RPC_URL || clusterApiUrl(network);
 
-    this.connection = new Connection(rpcUrl, 'confirmed');
-    this.network = network;
+      this.connection = new Connection(rpcUrl, 'confirmed');
+      this.network = network;
 
-    // Create server wallet from private key
-    if (!process.env.SERVER_WALLET_PRIVATE_KEY) {
-      // In development mode, we can create a temporary wallet for testing
-      if (process.env.NODE_ENV !== 'production') {
-        this.serverWallet = Keypair.generate();
-        console.warn('⚠️ WARNING: Using a generated wallet for development. DO NOT use in production!');
-        console.log(`📝 Development server wallet address: ${this.serverWallet.publicKey.toBase58()}`);
-        console.log('📝 To use a real wallet, set SERVER_WALLET_PRIVATE_KEY in your .env file');
+      // Create server wallet from private key
+      if (!process.env.SERVER_WALLET_PRIVATE_KEY) {
+        // In development mode, we can create a temporary wallet for testing
+        if (process.env.NODE_ENV !== 'production') {
+          this.serverWallet = Keypair.generate();
+          console.warn('⚠️ WARNING: Using a generated wallet for development. DO NOT use in production!');
+          console.log(`📝 Development server wallet address: ${this.serverWallet.publicKey.toBase58()}`);
+          console.log('📝 To use a real wallet, set SERVER_WALLET_PRIVATE_KEY in your .env file');
+        } else {
+          throw new Error('SERVER_WALLET_PRIVATE_KEY is required in environment variables');
+        }
       } else {
-        throw new Error('SERVER_WALLET_PRIVATE_KEY is required in environment variables');
-      }
-    } else {
-      try {
         // First, try to parse as JSON array (for array format)
         let secretKey;
         const privateKeyRaw = process.env.SERVER_WALLET_PRIVATE_KEY.trim();
@@ -99,9 +99,19 @@ class SolanaService {
 
         this.serverWallet = Keypair.fromSecretKey(secretKey);
         console.log(`✅ Server wallet initialized: ${this.serverWallet.publicKey.toBase58()}`);
-      } catch (error) {
-        throw new Error(`Invalid server wallet private key: ${error.message}`);
       }
+    } catch (error) {
+      console.error('❌ Failed to initialize SolanaService:', error.message);
+      this.initError = error;
+    }
+  }
+
+  /**
+   * Helper to ensure the service is successfully initialized before running any operation
+   */
+  checkInit() {
+    if (this.initError) {
+      throw new Error(`SolanaService is not initialized: ${this.initError.message}`);
     }
 
     // Cached Magicblock auth token
@@ -114,6 +124,7 @@ class SolanaService {
    * @returns {Keypair} Server wallet keypair
    */
   getServerWallet() {
+    this.checkInit();
     return this.serverWallet;
   }
 
@@ -122,6 +133,7 @@ class SolanaService {
    * @returns {Connection} Solana connection
    */
   getConnection() {
+    this.checkInit();
     return this.connection;
   }
 
@@ -131,6 +143,7 @@ class SolanaService {
    * @returns {Promise<PublicKey>} Program ID
    */
   async getMintProgramId(mintAddress) {
+    this.checkInit();
     try {
       const accountInfo = await this.connection.getAccountInfo(mintAddress);
       if (!accountInfo) {
@@ -149,6 +162,7 @@ class SolanaService {
    * @returns {Promise<number>} Decimals
    */
   async getMintDecimals(mintAddress) {
+    this.checkInit();
     try {
       const programId = await this.getMintProgramId(mintAddress);
       const mintInfo = await getMint(
@@ -171,6 +185,7 @@ class SolanaService {
    * @returns {Promise<Account>} Token account
    */
   async createAssociatedTokenAccount(tokenMintAddress, owner) {
+    this.checkInit();
     try {
       const programId = await this.getMintProgramId(tokenMintAddress);
 
@@ -211,6 +226,7 @@ class SolanaService {
    * @returns {Promise<number>} Token balance
    */
   async getTokenBalance(tokenAccount) {
+    this.checkInit();
     try {
       const accountInfo = await this.connection.getTokenAccountBalance(tokenAccount);
       return accountInfo.value.uiAmount || 0;
@@ -226,6 +242,7 @@ class SolanaService {
    * @returns {Promise<number>} Token balance in server wallet
    */
   async getServerTokenBalance(tokenMintAddress) {
+    this.checkInit();
     try {
       console.log(`Getting token balance for mint: ${tokenMintAddress.toBase58()}`);
       console.log(`Server wallet: ${this.serverWallet.publicKey.toBase58()}`);
@@ -266,6 +283,7 @@ class SolanaService {
    * @returns {Promise<number>} SOL balance in server wallet
    */
   async getSolBalance() {
+    this.checkInit();
     try {
       const balance = await this.connection.getBalance(this.serverWallet.publicKey);
       return balance / LAMPORTS_PER_SOL;
@@ -282,6 +300,7 @@ class SolanaService {
    * @returns {Promise<string>} Transaction signature
    */
   async transferSol(recipientAddress, amount) {
+    this.checkInit();
     try {
       // Validate inputs
       if (!this.isValidSolanaAddress(recipientAddress)) {
@@ -333,6 +352,7 @@ class SolanaService {
    * @returns {Promise<string>} Transaction signature
    */
   async transferSplToken(recipientAddress, amount, tokenMintAddress) {
+    this.checkInit();
     try {
       console.log(`Starting SPL Token Transfer: ${amount} to ${recipientAddress}`);
 
@@ -576,6 +596,7 @@ class SolanaService {
    * @returns {Promise<string>} Transaction signature
    */
   async transferMagicblock(recipientAddress, amount, tokenMintAddress) {
+    this.checkInit();
     try {
       // Validate inputs
       if (!this.isValidSolanaAddress(recipientAddress)) {
