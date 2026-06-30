@@ -34,10 +34,11 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: ["'self'", "data:", "validator.swagger.io"],
-      scriptSrc: ["'self'"],
-      fontSrc: ["'self'", "https:", "data:"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://unpkg.com"],
+      fontSrc: ["'self'", "https:", "data:", "https://fonts.gstatic.com"],
+      connectSrc: ["'self'", "https:", "wss:"],
     },
   },
   hsts: {

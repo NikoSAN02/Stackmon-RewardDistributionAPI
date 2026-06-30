@@ -365,12 +365,25 @@
 
     let userPublicKey = null;
 
-    // Check if Phantom is installed
-    const isPhantomInstalled = window.solana && window.solana.isPhantom;
+    // Resolve the Phantom provider dynamically to avoid extension injection race conditions
+    function getProvider() {
+        if ('phantom' in window) {
+            const provider = window.phantom?.solana;
+            if (provider?.isPhantom) {
+                return provider;
+            }
+        }
+        // Fallback to legacy window.solana check
+        if ('solana' in window && window.solana.isPhantom) {
+            return window.solana;
+        }
+        return null;
+    }
 
     // Connect Wallet
     async function connectWallet() {
-        if (!isPhantomInstalled) {
+        const provider = getProvider();
+        if (!provider) {
             alert('Phantom Wallet not found! Please install the Phantom extension.');
             window.open('https://phantom.app/', '_blank');
             return;
@@ -380,7 +393,7 @@
             btnConnect.disabled = true;
             btnConnect.innerHTML = '<div class="loader"></div> Connecting...';
             
-            const response = await window.solana.connect();
+            const response = await provider.connect();
             userPublicKey = response.publicKey.toString();
             
             // Update UI
@@ -438,15 +451,18 @@
             console.log('Deserializing transaction...');
             const transactionBuffer = Uint8Array.from(atob(txBase64), c => c.charCodeAt(0));
             
+            const provider = getProvider();
+            if (!provider) throw new Error('Wallet provider lost');
+
             let signedTransaction;
             if (version === 'v0') {
                 const tx = solanaWeb3.VersionedTransaction.deserialize(transactionBuffer);
                 console.log('Signing VersionedTransaction with Phantom...');
-                signedTransaction = await window.solana.signTransaction(tx);
+                signedTransaction = await provider.signTransaction(tx);
             } else {
                 const tx = solanaWeb3.Transaction.from(transactionBuffer);
                 console.log('Signing Legacy Transaction with Phantom...');
-                signedTransaction = await window.solana.signTransaction(tx);
+                signedTransaction = await provider.signTransaction(tx);
             }
 
             // Step 3: Submit signed transaction to MagicBlock Ephemeral RPC
@@ -493,18 +509,23 @@
     btnConnect.addEventListener('click', connectWallet);
     btnClaim.addEventListener('click', claimReward);
 
-    // Auto-connect if already authorized
-    if (isPhantomInstalled) {
-        window.solana.connect({ onlyIfTrusted: true })
-            .then(response => {
-                userPublicKey = response.publicKey.toString();
-                walletBadge.classList.add('connected');
-                walletStatusText.textContent = `Connected: ${userPublicKey.slice(0, 4)}...${userPublicKey.slice(-4)}`;
-                btnConnect.style.display = 'none';
-                btnClaim.disabled = false;
-            })
-            .catch(() => {});
-    }
+    // Auto-connect if already authorized (wait slightly for injection)
+    window.addEventListener('load', () => {
+        setTimeout(() => {
+            const provider = getProvider();
+            if (provider) {
+                provider.connect({ onlyIfTrusted: true })
+                    .then(response => {
+                        userPublicKey = response.publicKey.toString();
+                        walletBadge.classList.add('connected');
+                        walletStatusText.textContent = `Connected: ${userPublicKey.slice(0, 4)}...${userPublicKey.slice(-4)}`;
+                        btnConnect.style.display = 'none';
+                        btnClaim.disabled = false;
+                    })
+                    .catch(() => {});
+            }
+        }, 500);
+    });
 </script>
 
 </body>
