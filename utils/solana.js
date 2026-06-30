@@ -543,7 +543,29 @@ class SolanaService {
       idempotent: true
     };
 
+    // Capture balances before deposit
+    let baseBalanceBefore, perBalanceBefore, balanceMintPubkey, balanceProgramId, balanceServerATA;
+    try {
+      balanceMintPubkey = new PublicKey(mint);
+      balanceProgramId = await this.getMintProgramId(balanceMintPubkey);
+      balanceServerATA = await getOrCreateAssociatedTokenAccount(
+        this.connection, this.serverWallet, balanceMintPubkey, this.serverWallet.publicKey,
+        true, 'confirmed', undefined, balanceProgramId
+      );
+      const baseInfo = await this.connection.getTokenAccountBalance(balanceServerATA.address);
+      baseBalanceBefore = BigInt(baseInfo.value.amount);
+    } catch (e) {
+      baseBalanceBefore = null;
+    }
+    try {
+      const perBal = await this.getMagicblockPrivateBalance(mint);
+      perBalanceBefore = BigInt(perBal);
+    } catch (e) {
+      perBalanceBefore = null;
+    }
+
     const response = await axios.post(`${MAGICBLOCK_API_URL}/v1/spl/deposit`, depositPayload);
+    console.log("MagicBlock Deposit Response:", response.data);
 
     if (!response.data || !response.data.transactionBase64) {
       throw new Error('Invalid response from Magicblock deposit API');
@@ -553,9 +575,17 @@ class SolanaService {
     const transactionBuffer = Buffer.from(response.data.transactionBase64, 'base64');
     let signature;
 
-    const connectionToSend = response.data.sendRpcEndpoint
-      ? new Connection(response.data.sendRpcEndpoint, 'confirmed')
-      : this.connection;
+    let connectionToSend;
+    if (response.data.sendRpcEndpoint) {
+      connectionToSend = new Connection(response.data.sendRpcEndpoint, 'confirmed');
+    } else if (response.data.sendTo) {
+      if (response.data.sendTo === 'ephemeral') {
+        throw new Error('MagicBlock requested ephemeral submission but did not provide an ephemeral RPC endpoint.');
+      }
+      connectionToSend = this.connection;
+    } else {
+      connectionToSend = this.connection;
+    }
 
     if (response.data.version === 'v0') {
       const versionedTransaction = VersionedTransaction.deserialize(transactionBuffer);
@@ -575,7 +605,225 @@ class SolanaService {
       signature,
     });
 
+    // Capture balances after deposit and verify
+    let baseBalanceAfter, perBalanceAfter;
+    try {
+      const baseInfoAfter = await this.connection.getTokenAccountBalance(balanceServerATA.address);
+      baseBalanceAfter = BigInt(baseInfoAfter.value.amount);
+    } catch (e) {
+      baseBalanceAfter = null;
+    }
+    try {
+      const perBalAfter = await this.getMagicblockPrivateBalance(mint);
+      perBalanceAfter = BigInt(perBalAfter);
+    } catch (e) {
+      perBalanceAfter = null;
+    }
+
+    console.log('----------------------------------------');
+    console.log('Deposit Verification');
+    console.log('----------------------------------------');
+    console.log(`Wallet Before : ${baseBalanceBefore !== null ? baseBalanceBefore.toString() : 'N/A'}`);
+    console.log(`Wallet After  : ${baseBalanceAfter !== null ? baseBalanceAfter.toString() : 'N/A'}`);
+    console.log('');
+    console.log(`PER Before    : ${perBalanceBefore !== null ? perBalanceBefore.toString() : 'N/A'}`);
+    console.log(`PER After     : ${perBalanceAfter !== null ? perBalanceAfter.toString() : 'N/A'}`);
+    console.log('');
+    console.log(`Expected`);
+    console.log(`Wallet -${amount}`);
+    console.log(`PER +${amount}`);
+    console.log('');
+    if (baseBalanceBefore !== null && baseBalanceAfter !== null && perBalanceBefore !== null && perBalanceAfter !== null) {
+      const walletDiff = baseBalanceBefore - baseBalanceAfter;
+      const perDiff = perBalanceAfter - perBalanceBefore;
+      if (walletDiff >= BigInt(amount) && perDiff >= BigInt(amount)) {
+        console.log('PASS');
+      } else {
+        console.log('FAIL');
+      }
+    } else {
+      console.log('Verification incomplete (some balances unavailable)');
+    }
+    console.log('----------------------------------------');
+
     console.log(`✅ Deposit confirmed. Signature: ${signature}`);
+    return signature;
+  }
+
+  // ─── Magicblock Private Payments: Withdraw from PER ────────────────────
+
+  /**
+   * Withdraw SPL tokens from the Private Ephemeral Rollup back to the
+   * server's base (on-chain) balance. This "un-shields" the tokens.
+   * @param {number} amount - Amount in base units to withdraw
+   * @param {string} [mintAddress] - SPL mint address (defaults to devnet USDC)
+   * @returns {Promise<string>} Transaction signature of the withdrawal
+   */
+  async withdrawFromMagicblockPER(amount, mintAddress) {
+    const mint = mintAddress || USDC_DEVNET_MINT;
+    console.log(`📤 Withdrawing ${amount} base units of ${mint} from Magicblock PER...`);
+
+    // Capture balances before withdraw
+    let baseBalanceBefore, perBalanceBefore, balanceMintPubkey, balanceProgramId, balanceServerATA;
+    try {
+      balanceMintPubkey = new PublicKey(mint);
+      balanceProgramId = await this.getMintProgramId(balanceMintPubkey);
+      balanceServerATA = await getOrCreateAssociatedTokenAccount(
+        this.connection, this.serverWallet, balanceMintPubkey, this.serverWallet.publicKey,
+        true, 'confirmed', undefined, balanceProgramId
+      );
+      const baseInfo = await this.connection.getTokenAccountBalance(balanceServerATA.address);
+      baseBalanceBefore = BigInt(baseInfo.value.amount);
+    } catch (e) {
+      baseBalanceBefore = null;
+    }
+    try {
+      const perBal = await this.getMagicblockPrivateBalance(mint);
+      perBalanceBefore = BigInt(perBal);
+    } catch (e) {
+      perBalanceBefore = null;
+    }
+
+    // Check PER balance before proceeding
+    if (perBalanceBefore !== null && perBalanceBefore < BigInt(amount)) {
+      throw new Error(
+        `Insufficient PER balance for withdrawal. ` +
+        `PER balance: ${perBalanceBefore.toString()} base units, ` +
+        `needed: ${amount} base units.`
+      );
+    }
+
+    // Request an unsigned withdraw transaction from Magicblock
+    const withdrawPayload = {
+      owner: this.serverWallet.publicKey.toBase58(),
+      mint,
+      amount,
+      cluster: this.network,
+      initIfMissing: true,
+      initAtasIfMissing: true,
+      idempotent: true
+    };
+
+    const response = await axios.post(`${MAGICBLOCK_API_URL}/v1/spl/withdraw`, withdrawPayload);
+    console.log("MagicBlock Withdraw Response:", response.data);
+
+    if (!response.data || !response.data.transactionBase64) {
+      throw new Error('Invalid response from Magicblock withdraw API');
+    }
+
+    // Sign and send the withdraw transaction
+    const transactionBuffer = Buffer.from(response.data.transactionBase64, 'base64');
+    let signature;
+
+    let connectionToSend;
+    if (response.data.sendRpcEndpoint) {
+      connectionToSend = new Connection(response.data.sendRpcEndpoint, 'confirmed');
+    } else if (response.data.sendTo) {
+      if (response.data.sendTo === 'ephemeral') {
+        throw new Error('MagicBlock requested ephemeral submission but did not provide an ephemeral RPC endpoint.');
+      }
+      connectionToSend = this.connection;
+    } else {
+      connectionToSend = this.connection;
+    }
+
+    if (response.data.version === 'v0') {
+      const versionedTransaction = VersionedTransaction.deserialize(transactionBuffer);
+      versionedTransaction.sign([this.serverWallet]);
+      signature = await connectionToSend.sendTransaction(versionedTransaction, { skipPreflight: true });
+    } else {
+      const transaction = Transaction.from(transactionBuffer);
+      transaction.sign(this.serverWallet);
+      signature = await connectionToSend.sendRawTransaction(transaction.serialize(), { skipPreflight: true });
+    }
+
+    // Confirm the withdraw
+    const latestBlockHash = await connectionToSend.getLatestBlockhash();
+    await connectionToSend.confirmTransaction({
+      blockhash: latestBlockHash.blockhash,
+      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+      signature,
+    });
+
+    // Debug: inspect the confirmed transaction on-chain
+    try {
+      const txInfo = await connectionToSend.getTransaction(signature, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0
+      });
+      if (txInfo) {
+        console.log('');
+        console.log('--- On-chain Transaction Debug ---');
+        console.log('Slot:', txInfo.slot);
+        if (txInfo.meta) {
+          console.log('Meta.err:', txInfo.meta.err);
+          console.log('preTokenBalances:', JSON.stringify(txInfo.meta.preTokenBalances, null, 2));
+          console.log('postTokenBalances:', JSON.stringify(txInfo.meta.postTokenBalances, null, 2));
+          console.log('logMessages:', txInfo.meta.logMessages);
+        }
+        console.log('--- End Debug ---');
+        console.log('');
+      } else {
+        console.log('⚠️ Transaction not found on chain yet (may still be propagating)');
+      }
+    } catch (debugErr) {
+      console.log('⚠️ Could not fetch transaction details:', debugErr.message);
+    }
+
+    // Print destination ATA and its on-chain balance
+    try {
+      const destAta = balanceServerATA.address;
+      console.log(`Destination ATA: ${destAta.toBase58()}`);
+      const destAtaInfo = await this.connection.getTokenAccountBalance(destAta);
+      console.log(`Destination ATA balance: ${destAtaInfo.value.amount} base units (${destAtaInfo.value.uiAmountString} USDC)`);
+    } catch (e) {
+      console.log('⚠️ Could not fetch destination ATA balance:', e.message);
+    }
+
+    // Capture balances after withdraw and verify
+    let baseBalanceAfter, perBalanceAfter;
+    try {
+      const baseInfoAfter = await this.connection.getTokenAccountBalance(balanceServerATA.address);
+      baseBalanceAfter = BigInt(baseInfoAfter.value.amount);
+    } catch (e) {
+      baseBalanceAfter = null;
+    }
+    try {
+      const perBalAfter = await this.getMagicblockPrivateBalance(mint);
+      perBalanceAfter = BigInt(perBalAfter);
+    } catch (e) {
+      perBalanceAfter = null;
+    }
+
+    console.log('----------------------------------------');
+    console.log('Withdraw Verification');
+    console.log('----------------------------------------');
+    console.log(`Wallet Before : ${baseBalanceBefore !== null ? baseBalanceBefore.toString() : 'N/A'}`);
+    console.log(`Wallet After  : ${baseBalanceAfter !== null ? baseBalanceAfter.toString() : 'N/A'}`);
+    console.log('');
+    console.log(`PER Before    : ${perBalanceBefore !== null ? perBalanceBefore.toString() : 'N/A'}`);
+    console.log(`PER After     : ${perBalanceAfter !== null ? perBalanceAfter.toString() : 'N/A'}`);
+    console.log('');
+    console.log(`Withdraw Amount : ${amount}`);
+    console.log('');
+    console.log(`Expected`);
+    console.log(`Wallet +${amount}`);
+    console.log(`PER -${amount}`);
+    console.log('');
+    if (baseBalanceBefore !== null && baseBalanceAfter !== null && perBalanceBefore !== null && perBalanceAfter !== null) {
+      const walletDiff = baseBalanceAfter - baseBalanceBefore;
+      const perDiff = perBalanceBefore - perBalanceAfter;
+      if (walletDiff >= BigInt(amount) && perDiff >= BigInt(amount)) {
+        console.log('PASS');
+      } else {
+        console.log('FAIL');
+      }
+    } else {
+      console.log('Verification incomplete (some balances unavailable)');
+    }
+    console.log('----------------------------------------');
+
+    console.log(`✅ Withdraw confirmed. Signature: ${signature}`);
     return signature;
   }
 
@@ -683,6 +931,7 @@ class SolanaService {
 
       console.log(`📤 Requesting Magicblock private transfer...`);
       const response = await axios.post(`${MAGICBLOCK_API_URL}/v1/spl/transfer`, payload);
+      console.log("MagicBlock Transfer Response:", response.data);
 
       if (!response.data || !response.data.transactionBase64) {
         throw new Error('Invalid response from Magicblock transfer API');
@@ -690,9 +939,17 @@ class SolanaService {
 
       const transactionBuffer = Buffer.from(response.data.transactionBase64, 'base64');
 
-      const connectionToSend = response.data.sendRpcEndpoint
-        ? new Connection(response.data.sendRpcEndpoint, 'confirmed')
-        : this.connection;
+      let connectionToSend;
+      if (response.data.sendRpcEndpoint) {
+        connectionToSend = new Connection(response.data.sendRpcEndpoint, 'confirmed');
+      } else if (response.data.sendTo) {
+        if (response.data.sendTo === 'ephemeral') {
+          throw new Error('MagicBlock requested ephemeral submission but did not provide an ephemeral RPC endpoint.');
+        }
+        connectionToSend = this.connection;
+      } else {
+        connectionToSend = this.connection;
+      }
 
       let signature;
       if (response.data.version === 'v0') {
@@ -712,6 +969,36 @@ class SolanaService {
         lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
         signature,
       });
+
+      // Verify sender balance after transfer
+      console.log('----------------------------------------');
+      console.log('Transfer Verification');
+      console.log('----------------------------------------');
+      console.log(`Sender PER Before : ${ephemeralBalance !== null ? ephemeralBalance : 'N/A'}`);
+      let senderPerAfter;
+      try {
+        senderPerAfter = await this.getMagicblockPrivateBalance(mintStr);
+        console.log(`Sender PER After  : ${senderPerAfter !== null ? senderPerAfter : 'N/A'}`);
+      } catch (e) {
+        senderPerAfter = null;
+        console.log(`Sender PER After  : N/A`);
+      }
+      console.log('');
+      console.log(`Transfer Amount: ${rawAmount}`);
+      console.log('');
+      if (ephemeralBalance !== null && senderPerAfter !== null) {
+        const senderDiff = ephemeralBalance - senderPerAfter;
+        console.log(`Sender Diff: -${senderDiff}`);
+        if (senderDiff >= rawAmount) {
+          console.log('PASS');
+        } else {
+          console.log('FAIL');
+        }
+      } else {
+        console.log('Verification incomplete (sender balances unavailable)');
+      }
+      console.log('TODO: Recipient PER verification skipped (only sender wallet loaded)');
+      console.log('----------------------------------------');
 
       console.log(`✅ Magicblock private transfer confirmed. Signature: ${signature}`);
       return signature;

@@ -45,7 +45,7 @@ async function runTests() {
   try {
     const token = await solanaService.getMagicblockAuthToken();
     console.log(`   ✅ PASS — Got auth token (${token.substring(0, 20)}...)`);
-    
+
     // Test caching — second call should be instant
     const startCache = Date.now();
     const cachedToken = await solanaService.getMagicblockAuthToken();
@@ -81,7 +81,7 @@ async function runTests() {
   try {
     const { PublicKey } = require('@solana/web3.js');
     const { getOrCreateAssociatedTokenAccount } = require('@solana/spl-token');
-    
+
     const mintPubkey = new PublicKey(USDC_DEVNET_MINT);
     const programId = await solanaService.getMintProgramId(mintPubkey);
     const serverATA = await getOrCreateAssociatedTokenAccount(
@@ -94,7 +94,7 @@ async function runTests() {
       undefined,
       programId
     );
-    
+
     const balanceInfo = await solanaService.getConnection().getTokenAccountBalance(serverATA.address);
     baseBalance = parseInt(balanceInfo.value.amount, 10);
     console.log(`   ✅ PASS — Base USDC balance: ${balanceInfo.value.uiAmountString} USDC (${balanceInfo.value.amount} base units)`);
@@ -130,7 +130,7 @@ async function runTests() {
   console.log('📋 Test 6: Private Ephemeral-to-Ephemeral Transfer');
   if (recipientAddress) {
     try {
-      const transferAmount = 0.1; // 0.1 USDC
+      const transferAmount = 5; // 0.1 USDC
       console.log(`   Transferring ${transferAmount} USDC to ${recipientAddress}...`);
       const sig = await solanaService.transferMagicblock(recipientAddress, transferAmount, USDC_DEVNET_MINT);
       console.log(`   ✅ PASS — Transfer signature: ${sig}`);
