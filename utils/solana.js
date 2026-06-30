@@ -529,31 +529,24 @@ class SolanaService {
    */
   async depositToMagicblockPER(amount, mintAddress) {
     const mint = mintAddress || USDC_DEVNET_MINT;
+    const isWsol = mint === 'So11111111111111111111111111111111111111112';
     console.log(`📥 Depositing ${amount} base units of ${mint} into Magicblock PER...`);
-
-    // Request an unsigned deposit transaction from Magicblock
-    const depositPayload = {
-      owner: this.serverWallet.publicKey.toBase58(),
-      mint,
-      amount,
-      cluster: this.network,
-      initIfMissing: true,
-      initVaultIfMissing: true,
-      initAtasIfMissing: true,
-      idempotent: true
-    };
 
     // Capture balances before deposit
     let baseBalanceBefore, perBalanceBefore, balanceMintPubkey, balanceProgramId, balanceServerATA;
     try {
-      balanceMintPubkey = new PublicKey(mint);
-      balanceProgramId = await this.getMintProgramId(balanceMintPubkey);
-      balanceServerATA = await getOrCreateAssociatedTokenAccount(
-        this.connection, this.serverWallet, balanceMintPubkey, this.serverWallet.publicKey,
-        true, 'confirmed', undefined, balanceProgramId
-      );
-      const baseInfo = await this.connection.getTokenAccountBalance(balanceServerATA.address);
-      baseBalanceBefore = BigInt(baseInfo.value.amount);
+      if (isWsol) {
+        baseBalanceBefore = BigInt(await this.connection.getBalance(this.serverWallet.publicKey));
+      } else {
+        balanceMintPubkey = new PublicKey(mint);
+        balanceProgramId = await this.getMintProgramId(balanceMintPubkey);
+        balanceServerATA = await getOrCreateAssociatedTokenAccount(
+          this.connection, this.serverWallet, balanceMintPubkey, this.serverWallet.publicKey,
+          true, 'confirmed', undefined, balanceProgramId
+        );
+        const baseInfo = await this.connection.getTokenAccountBalance(balanceServerATA.address);
+        baseBalanceBefore = BigInt(baseInfo.value.amount);
+      }
     } catch (e) {
       baseBalanceBefore = null;
     }
@@ -564,7 +557,37 @@ class SolanaService {
       perBalanceBefore = null;
     }
 
-    const response = await axios.post(`${MAGICBLOCK_API_URL}/v1/spl/deposit`, depositPayload);
+    let response;
+    if (isWsol) {
+      // For WSOL, we perform a transfer to ourselves from base to ephemeral with wrapAndUnwrapSol: true
+      const depositPayload = {
+        from: this.serverWallet.publicKey.toBase58(),
+        to: this.serverWallet.publicKey.toBase58(),
+        mint,
+        amount,
+        fromBalance: 'base',
+        toBalance: 'ephemeral',
+        visibility: 'private',
+        wrapAndUnwrapSol: true,
+        cluster: this.network,
+        initIfMissing: true,
+        initAtasIfMissing: true,
+        initVaultIfMissing: true
+      };
+      response = await axios.post(`${MAGICBLOCK_API_URL}/v1/spl/transfer`, depositPayload);
+    } else {
+      const depositPayload = {
+        owner: this.serverWallet.publicKey.toBase58(),
+        mint,
+        amount,
+        cluster: this.network,
+        initIfMissing: true,
+        initVaultIfMissing: true,
+        initAtasIfMissing: true,
+        idempotent: true
+      };
+      response = await axios.post(`${MAGICBLOCK_API_URL}/v1/spl/deposit`, depositPayload);
+    }
     console.log("MagicBlock Deposit Response:", response.data);
 
     if (!response.data || !response.data.transactionBase64) {
@@ -608,8 +631,12 @@ class SolanaService {
     // Capture balances after deposit and verify
     let baseBalanceAfter, perBalanceAfter;
     try {
-      const baseInfoAfter = await this.connection.getTokenAccountBalance(balanceServerATA.address);
-      baseBalanceAfter = BigInt(baseInfoAfter.value.amount);
+      if (isWsol) {
+        baseBalanceAfter = BigInt(await this.connection.getBalance(this.serverWallet.publicKey));
+      } else {
+        const baseInfoAfter = await this.connection.getTokenAccountBalance(balanceServerATA.address);
+        baseBalanceAfter = BigInt(baseInfoAfter.value.amount);
+      }
     } catch (e) {
       baseBalanceAfter = null;
     }
@@ -938,32 +965,44 @@ class SolanaService {
 
       if (ephemeralBalance !== null && ephemeralBalance < rawAmount) {
         const shortfall = rawAmount - ephemeralBalance;
-        const depositAmount = Math.max(shortfall, MIN_DEPOSIT_AMOUNT);
+        const minDeposit = mintStr === 'So11111111111111111111111111111111111111112' ? 100_000_000 : 5_000_000;
+        const depositAmount = Math.max(shortfall, minDeposit);
 
         console.log(`📉 Ephemeral balance (${ephemeralBalance}) < required (${rawAmount}). Depositing ${depositAmount} base units...`);
 
-        // Verify the server has enough base (on-chain) USDC to deposit
-        const mintPubkey = new PublicKey(mintStr);
-        const programId = await this.getMintProgramId(mintPubkey);
-        const serverATA = await getOrCreateAssociatedTokenAccount(
-          this.connection,
-          this.serverWallet,
-          mintPubkey,
-          this.serverWallet.publicKey,
-          true,
-          'confirmed',
-          undefined,
-          programId
-        );
-        const baseBalance = await this.connection.getTokenAccountBalance(serverATA.address);
-        const baseAmount = BigInt(baseBalance.value.amount);
+        // Verify the server has enough base (on-chain) tokens/SOL to deposit
+        const isWsol = mintStr === 'So11111111111111111111111111111111111111112';
+        let baseAmount;
+        let baseBalanceString = '';
+
+        if (isWsol) {
+          const lamports = await this.connection.getBalance(this.serverWallet.publicKey);
+          baseAmount = BigInt(lamports);
+          baseBalanceString = `${(lamports / 1_000_000_000).toFixed(4)} SOL`;
+        } else {
+          const mintPubkey = new PublicKey(mintStr);
+          const programId = await this.getMintProgramId(mintPubkey);
+          const serverATA = await getOrCreateAssociatedTokenAccount(
+            this.connection,
+            this.serverWallet,
+            mintPubkey,
+            this.serverWallet.publicKey,
+            true,
+            'confirmed',
+            undefined,
+            programId
+          );
+          const baseBalance = await this.connection.getTokenAccountBalance(serverATA.address);
+          baseAmount = BigInt(baseBalance.value.amount);
+          baseBalanceString = `${baseBalance.value.uiAmountString} tokens`;
+        }
 
         if (baseAmount < BigInt(depositAmount)) {
           throw new Error(
-            `Insufficient USDC balance for deposit. ` +
-            `Base chain balance: ${baseBalance.value.uiAmountString} USDC, ` +
-            `needed to deposit: ${depositAmount / Math.pow(10, decimals)} USDC. ` +
-            `Please fund the server wallet (${this.serverWallet.publicKey.toBase58()}) with more USDC.`
+            `Insufficient base balance for deposit. ` +
+            `Base chain balance: ${baseBalanceString}, ` +
+            `needed to deposit: ${depositAmount / Math.pow(10, decimals)} ${isWsol ? 'SOL' : 'tokens'}. ` +
+            `Please fund the server wallet (${this.serverWallet.publicKey.toBase58()}) with more funds.`
           );
         }
 
@@ -984,7 +1023,7 @@ class SolanaService {
         fromBalance: "ephemeral",
         toBalance: "base",
         cluster: this.network,
-        wrapAndUnwrapSol: false,
+        wrapAndUnwrapSol: mintStr === 'So11111111111111111111111111111111111111112',
         initIfMissing: false,
         initAtasIfMissing: true,
         initVaultIfMissing: false
@@ -1126,7 +1165,8 @@ class SolanaService {
 
       if (ephemeralBalance !== null && ephemeralBalance < rawAmount) {
         const shortfall = rawAmount - ephemeralBalance;
-        const depositAmount = Math.max(shortfall, MIN_DEPOSIT_AMOUNT);
+        const minDeposit = mintStr === 'So11111111111111111111111111111111111111112' ? 100_000_000 : 5_000_000;
+        const depositAmount = Math.max(shortfall, minDeposit);
 
         console.log(`📉 Ephemeral balance (${ephemeralBalance}) < required (${rawAmount}). Depositing ${depositAmount} base units...`);
         await this.depositToMagicblockPER(depositAmount, mintStr);
@@ -1143,7 +1183,7 @@ class SolanaService {
         fromBalance: "ephemeral",
         toBalance: "base", // Settle directly to user's base wallet
         cluster: this.network,
-        wrapAndUnwrapSol: false,
+        wrapAndUnwrapSol: mintStr === 'So11111111111111111111111111111111111111112',
         initIfMissing: false,
         initAtasIfMissing: true,
         initVaultIfMissing: false

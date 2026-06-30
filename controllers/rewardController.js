@@ -1,6 +1,7 @@
 const TokenService = require('../services/tokenService');
 const Joi = require('joi');
 const logger = require('../utils/logger');
+const { PublicKey } = require('@solana/web3.js');
 
 // Validation schema for single reward request
 const singleRewardSchema = Joi.object({
@@ -59,19 +60,19 @@ class RewardController {
 
       // Calculate the Base Reward based on the Game Mode
       if (mode === "practice") {
-          // Practice Mode: 100 points = 1 USDC (0.01 per point)
-          calculatedReward = score * 0.01;
+          // Practice Mode: 1000 points = 1 SOL (0.001 per point)
+          calculatedReward = score * 0.001;
       } 
       else if (mode === "bot") {
-          // Bot Mode: 100 points = 0.5 USDC (0.005 per point)
-          calculatedReward = score * 0.005;
+          // Bot Mode: 1000 points = 0.5 SOL (0.0005 per point)
+          calculatedReward = score * 0.0005;
       } 
       else if (mode === "ranked") {
           // Online Ranked Mode: Winner takes 1.8x of their original bet
           calculatedReward = bet_amount * 1.8;
       }
 
-      // Add the Combo Multiplier Bonus (The extra USDC earned by placing perfect blocks)
+      // Add the Combo Multiplier Bonus (The extra SOL earned by placing perfect blocks)
       const finalRewardToDistribute = calculatedReward + bonus_sol;
 
       if (finalRewardToDistribute <= 0) {
@@ -81,12 +82,12 @@ class RewardController {
         });
       }
 
-      // Perform the USDC transfer via Magicblock private payments
+      // Perform the SOL transfer
       const transactionSignature = await this.tokenService.transferSol(address, finalRewardToDistribute);
 
       res.status(200).json({
         success: true,
-        message: 'Reward distributed successfully',
+        message: 'SOL reward distributed successfully',
         data: {
           recipient: address,
           amount: finalRewardToDistribute,
@@ -148,19 +149,19 @@ class RewardController {
 
       // Calculate the Base Reward based on the Game Mode
       if (mode === "practice") {
-          // Practice Mode: 100 points = 1 USDC (0.01 per point)
-          calculatedReward = score * 0.01;
+          // Practice Mode: 1000 points = 1 SOL (0.001 per point)
+          calculatedReward = score * 0.001;
       } 
       else if (mode === "bot") {
-          // Bot Mode: 100 points = 0.5 USDC (0.005 per point)
-          calculatedReward = score * 0.005;
+          // Bot Mode: 1000 points = 0.5 SOL (0.0005 per point)
+          calculatedReward = score * 0.0005;
       } 
       else if (mode === "ranked") {
           // Online Ranked Mode: Winner takes 1.8x of their original bet
           calculatedReward = bet_amount * 1.8;
       }
 
-      // Add the Combo Multiplier Bonus (The extra USDC earned by placing perfect blocks)
+      // Add the Combo Multiplier Bonus (The extra SOL earned by placing perfect blocks)
       const finalRewardToDistribute = calculatedReward + bonus_sol;
 
       if (finalRewardToDistribute <= 0) {
@@ -170,12 +171,12 @@ class RewardController {
         });
       }
 
-      // Perform the USDC transfer via Magicblock private payments
+      // Perform the SOL transfer via Magicblock private payments
       const transactionSignature = await this.tokenService.transferSolMagicblock(address, finalRewardToDistribute);
 
       res.status(200).json({
         success: true,
-        message: 'Magicblock USDC reward distributed successfully (private ephemeral transfer)',
+        message: 'Magicblock SOL reward distributed successfully (private ephemeral transfer)',
         data: {
           recipient: address,
           amount: finalRewardToDistribute,
@@ -277,17 +278,38 @@ class RewardController {
     try {
       logger.info('Balance check requested', { ip: req.ip });
 
-      const balance = await this.tokenService.solanaService.getSolBalance();
+      const solanaService = this.tokenService.solanaService;
+      const serverWalletPubkey = solanaService.getServerWallet().publicKey;
+
+      const solBalance = await solanaService.getSolBalance();
+
+      const WSOL_MINT_ADDRESS = new PublicKey('So11111111111111111111111111111111111111112');
+      let baseWsolBalance = 0;
+      try {
+        baseWsolBalance = await solanaService.getServerTokenBalance(WSOL_MINT_ADDRESS);
+      } catch (err) {
+        logger.warn('Error fetching server base WSOL balance', { error: err.message });
+      }
+
+      let ephemeralWsolBalance = 0;
+      try {
+        const rawPrivateBalance = await solanaService.getMagicblockPrivateBalance(WSOL_MINT_ADDRESS.toBase58());
+        ephemeralWsolBalance = rawPrivateBalance / 1_000_000_000; // Convert lamports to SOL
+      } catch (err) {
+        logger.warn('Error fetching server ephemeral WSOL balance', { error: err.message });
+      }
 
       res.status(200).json({
         success: true,
         data: {
-          balance: balance,
-          serverWallet: this.tokenService.solanaService.getServerWallet().publicKey.toBase58()
+          serverWallet: serverWalletPubkey.toBase58(),
+          solBalance,
+          baseWsolBalance,
+          ephemeralWsolBalance
         }
       });
 
-      logger.info('Balance check completed', { balance });
+      logger.info('Balance check completed', { solBalance, baseWsolBalance, ephemeralWsolBalance });
     } catch (error) {
       logger.error('Error getting balance', { error: error.message, ip: req.ip });
 

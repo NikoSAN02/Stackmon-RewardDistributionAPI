@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stackmon PER Developer Dashboard</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Solana Web3.js CDN (IIFE bundle - exposes window.solanaWeb3) -->
+  <script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.95.3/lib/index.iife.min.js"></script>
+  <!-- CSS Styling -->
+  <link rel="stylesheet" href="dev-style.css">
+</head>
+<body>
+  <div class="glow-backdrop"></div>
+  
+  <div class="container">
+    <!-- Header -->
+    <header class="dashboard-header">
+      <div class="logo-area">
+        <span class="logo-badge">PER</span>
+        <div class="title-group">
+          <h1>Stackmon Devnet Console</h1>
+          <p class="subtitle">Magicblock Private Ephemeral Rollup Testing & Diagnostics</p>
+        </div>
+      </div>
+      <div class="wallet-control">
+        <button id="btn-connect" class="btn btn-primary btn-glow">
+          <span class="btn-icon">⚡</span> Connect Wallet
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Grid Layout -->
+    <main class="dashboard-grid">
+      
+      <!-- Card 1: Server Diagnostics -->
+      <section class="card glass-card server-card">
+        <div class="card-header">
+          <div class="status-indicator online"></div>
+          <h2>Server Wallet Diagnostics</h2>
+        </div>
+        <div class="card-body">
+          <div class="info-row">
+            <span class="label">Public Key:</span>
+            <span id="srv-pubkey" class="value address-field font-mono">Loading...</span>
+          </div>
+          <div class="stats-grid">
+            <div class="stat-box">
+              <span class="stat-label">SOL Balance (Base)</span>
+              <span id="srv-sol" class="stat-val font-mono">0.0000</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-label">WSOL Balance (Base)</span>
+              <span id="srv-usdc-base" class="stat-val font-mono">0.0000</span>
+            </div>
+            <div class="stat-box accent-box">
+              <span class="stat-label">WSOL Balance (PER Ephemeral)</span>
+              <span id="srv-usdc-per" class="stat-val font-mono font-accent">0.0000</span>
+            </div>
+          </div>
+          <button id="btn-refresh-server" class="btn btn-secondary btn-full">
+            🔄 Refresh Server Status
+          </button>
+        </div>
+      </section>
+
+      <!-- Card 2: Connected User Diagnostics -->
+      <section class="card glass-card user-card">
+        <div class="card-header">
+          <div class="status-indicator offline" id="user-status-dot"></div>
+          <h2>User Wallet Diagnostics</h2>
+        </div>
+        <div class="card-body">
+          <div class="info-row">
+            <span class="label">Connected Key:</span>
+            <span id="user-pubkey" class="value address-field font-mono">Not Connected</span>
+          </div>
+          <div class="stats-grid">
+            <div class="stat-box">
+              <span class="stat-label">SOL Balance (Base)</span>
+              <span id="user-sol" class="stat-val font-mono">0.0000</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-label">WSOL Balance (Base)</span>
+              <span id="user-usdc-base" class="stat-val font-mono">0.0000</span>
+            </div>
+            <div class="stat-box accent-box-purple">
+              <span class="stat-label">WSOL Balance (PER Ephemeral)</span>
+              <span id="user-usdc-per" class="stat-val font-mono font-accent-purple">0.0000</span>
+            </div>
+          </div>
+          <button id="btn-refresh-user" class="btn btn-secondary btn-full" disabled>
+            🔄 Refresh User Status
+          </button>
+        </div>
+      </section>
+
+      <!-- Card 3: Magicblock PER Auth -->
+      <section class="card glass-card auth-card">
+        <div class="card-header">
+          <h2>Magicblock PER Auth (Private Reads)</h2>
+        </div>
+        <div class="card-body">
+          <p class="description-text">
+            Fetching private ephemeral rollup balances requires a bearer token signed by your wallet.
+          </p>
+          <div class="auth-status-container">
+            <span class="label">PER Login Status:</span>
+            <span id="auth-status-badge" class="badge badge-error">Unauthenticated</span>
+          </div>
+          <div class="auth-expiry-container hidden" id="expiry-container">
+            <span class="label">Token Expiry:</span>
+            <span id="auth-token-expiry" class="value font-mono">--:--</span>
+          </div>
+          <button id="btn-per-login" class="btn btn-accent btn-full" disabled>
+            🔑 Authenticate & Log In to PER
+          </button>
+        </div>
+      </section>
+
+      <!-- Card 4: PER Shield & Unshield Operations -->
+      <section class="card glass-card ops-card">
+        <div class="card-header">
+          <h2>PER Shield & Unshield (USDC)</h2>
+        </div>
+        <div class="card-body">
+          <div class="tab-container">
+            <div class="tab-buttons">
+              <button id="tab-btn-direct" class="tab-btn active">🎮 Direct Bet</button>
+              <button id="tab-btn-deposit" class="tab-btn">Shield (Deposit)</button>
+              <button id="tab-btn-withdraw" class="tab-btn">Unshield (Withdraw)</button>
+              <button id="tab-btn-send" class="tab-btn">PER Transfer</button>
+            </div>
+            
+            <!-- Direct Bet Panel -->
+            <div id="panel-direct" class="tab-panel active">
+              <p class="description-text">Wager SOL directly from your standard wallet (Base balance) into the server's private pool (PER Ephemeral balance). This is the recommended one-step betting flow.</p>
+              <div class="bet-flow-diagram">
+                <span class="bet-node user-node" style="background: rgba(59, 130, 246, 0.12); border-color: rgba(59, 130, 246, 0.3); color: #60a5fa;">Your Base</span>
+                <span class="bet-arrow">⇒ private ⇒</span>
+                <span class="bet-node server-node">Server PER</span>
+              </div>
+              <div class="info-row" style="margin-bottom:1rem;">
+                <span class="label">Server Wallet:</span>
+                <span id="direct-server-display" class="value address-field font-mono" style="font-size:0.78rem;">Loading...</span>
+              </div>
+              <div class="input-group">
+                <label for="input-direct-amount">Amount (SOL):</label>
+                <div class="input-wrapper">
+                  <input type="number" id="input-direct-amount" min="0.01" step="0.01" value="0.1">
+                  <span class="input-suffix">SOL</span>
+                </div>
+              </div>
+              <button id="btn-direct" class="btn btn-primary btn-full btn-glow btn-large" disabled>
+                🚀 Direct Bet (Base → PER Server)
+              </button>
+            </div>
+
+            <!-- Deposit Panel -->
+            <div id="panel-deposit" class="tab-panel">
+              <p class="description-text">Move SOL from your Base wallet to the Ephemeral Rollup (wrapped privately).</p>
+              <div class="input-group">
+                <label for="input-deposit-amount">Amount (SOL):</label>
+                <div class="input-wrapper">
+                  <input type="number" id="input-deposit-amount" min="0.01" step="0.01" value="0.1">
+                  <span class="input-suffix">SOL</span>
+                </div>
+              </div>
+              <button id="btn-deposit" class="btn btn-emerald btn-full btn-glow" disabled>
+                📥 Shield (Deposit into PER)
+              </button>
+            </div>
+
+            <!-- Withdraw Panel -->
+            <div id="panel-withdraw" class="tab-panel">
+              <p class="description-text">Move SOL/WSOL from the Ephemeral Rollup back to your Base wallet.</p>
+              <div class="input-group">
+                <label for="input-withdraw-amount">Amount (SOL):</label>
+                <div class="input-wrapper">
+                  <input type="number" id="input-withdraw-amount" min="0.01" step="0.01" value="0.1">
+                  <span class="input-suffix">SOL</span>
+                </div>
+              </div>
+              <button id="btn-withdraw" class="btn btn-emerald btn-full btn-glow" disabled>
+                📤 Unshield (Withdraw to Base)
+              </button>
+            </div>
+
+            <!-- Send to Server (Bet) Panel -->
+            <div id="panel-send" class="tab-panel">
+              <p class="description-text">Privately transfer SOL from your PER balance directly to the server's PER. Both wallets must have a PER account for this to work.</p>
+              <div class="bet-flow-diagram">
+                <span class="bet-node user-node">Your PER</span>
+                <span class="bet-arrow">⇒ private ⇒</span>
+                <span class="bet-node server-node">Server PER</span>
+              </div>
+              <div class="info-row" style="margin-bottom:1rem;">
+                <span class="label">Server Wallet:</span>
+                <span id="send-server-display" class="value address-field font-mono" style="font-size:0.78rem;">Loading...</span>
+              </div>
+              <div class="input-group">
+                <label for="input-send-amount">Amount (SOL):</label>
+                <div class="input-wrapper">
+                  <input type="number" id="input-send-amount" min="0.01" step="0.01" value="0.1">
+                  <span class="input-suffix">SOL</span>
+                </div>
+              </div>
+              <button id="btn-send" class="btn btn-primary btn-full btn-glow btn-large" disabled>
+                🎮 Send to Server PER (Place Bet)
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Card 5: Reward Distribution Simulator -->
+      <section class="card glass-card reward-card col-span-2">
+        <div class="card-header">
+          <h2>Trigger Game Reward Distribution</h2>
+        </div>
+        <div class="card-body grid-2-col">
+          <div class="inputs-column">
+            <div class="input-group">
+              <label for="input-reward-recipient">Recipient Solana Address:</label>
+              <input type="text" id="input-reward-recipient" placeholder="Recipient address (default: connected wallet)">
+            </div>
+            
+            <div class="input-row-flex">
+              <div class="input-group">
+                <label for="input-reward-score">Score (points):</label>
+                <input type="number" id="input-reward-score" min="0" value="500">
+              </div>
+              <div class="input-group">
+                <label for="select-reward-mode">Game Mode:</label>
+                <select id="select-reward-mode">
+                  <option value="practice">Practice (1000 pts = 1 SOL)</option>
+                  <option value="bot">Bot Match (1000 pts = 0.5 SOL)</option>
+                  <option value="ranked">Ranked Match (1.8x bet)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="input-row-flex">
+              <div class="input-group">
+                <label for="input-reward-bonus">Combo Bonus (SOL):</label>
+                <input type="number" id="input-reward-bonus" min="0" step="0.001" value="0.1000">
+              </div>
+              <div class="input-group">
+                <label for="input-reward-bet">Bet Amount (SOL):</label>
+                <input type="number" id="input-reward-bet" min="0" step="0.01" value="0.10">
+              </div>
+            </div>
+          </div>
+
+          <div class="actions-column">
+            <div class="input-group">
+              <label for="input-validation-token">Unity Validation Header Token:</label>
+              <input type="text" id="input-validation-token" value="StackMonUnityToken2026">
+            </div>
+            <div class="rewards-estimate-box">
+              <span class="est-label">Estimated Reward to Transfer:</span>
+              <span id="reward-estimation" class="est-value font-mono">0.6000 SOL</span>
+              <span class="est-desc">Base Reward: <span id="est-base">0.5000</span> | Bonus: <span id="est-bonus">0.1000</span></span>
+            </div>
+            <button id="btn-trigger-reward" class="btn btn-primary btn-full btn-large btn-glow">
+              🚀 Distribute Reward (POST /distribute)
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Card 6: Live Log Console -->
+      <section class="card glass-card console-card col-span-2">
+        <div class="card-header console-header">
+          <div class="console-title-area">
+            <div class="pulse-dot"></div>
+            <h2>Live Log Console</h2>
+          </div>
+          <button id="btn-clear-logs" class="btn-clear">Clear Logs</button>
+        </div>
+        <div class="console-body">
+          <div id="log-output" class="font-mono">
+            <div class="log-line system">[SYSTEM] Welcome to the Stackmon PER Developer Console.</div>
+            <div class="log-line system">[SYSTEM] Connecting to Solana Devnet...</div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="dashboard-footer">
+      <p>Stackmon Reward Distribution API &bull; Powered by Magicblock Private Ephemeral Rollups (PER)</p>
+    </footer>
+  </div>
+
+  <script src="dev-app.js"></script>
+</body>
+</html>

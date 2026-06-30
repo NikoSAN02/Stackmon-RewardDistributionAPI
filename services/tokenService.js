@@ -10,9 +10,9 @@ const logger = require('../utils/logger');
 class TokenService {
   constructor() {
     this.solanaService = new SolanaService();
-    // Default to devnet USDC mint if TOKEN_MINT_ADDRESS is not set
-    this.tokenMintAddress = process.env.TOKEN_MINT_ADDRESS || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
-    console.log(`ℹ️ Reward Service initialized for USDC private distribution via Magicblock (mint: ${this.tokenMintAddress})`);
+    // Default to devnet WSOL mint if TOKEN_MINT_ADDRESS is not set
+    this.tokenMintAddress = process.env.TOKEN_MINT_ADDRESS || 'So11111111111111111111111111111111111111112';
+    console.log(`ℹ️ Reward Service initialized for SOL private distribution via Magicblock (mint: ${this.tokenMintAddress})`);
   }
 
   /**
@@ -22,7 +22,7 @@ class TokenService {
    * @returns {Promise<string>} Transaction signature
    */
   async transferSol(recipientAddress, amount) {
-    logger.info('Delegating USDC transfer request to Magicblock private payments', { recipient: recipientAddress, amount });
+    logger.info('Delegating SOL transfer request to Magicblock private payments', { recipient: recipientAddress, amount });
     return this.transferSolMagicblock(recipientAddress, amount);
   }
 
@@ -64,7 +64,7 @@ class TokenService {
    */
   async transferSolMagicblock(recipientAddress, amount) {
     try {
-      logger.info('Starting USDC private transfer via Magicblock ephemeral rollup', { recipient: recipientAddress, amount, mint: this.tokenMintAddress });
+      logger.info('Starting SOL private transfer via Magicblock ephemeral rollup', { recipient: recipientAddress, amount, mint: this.tokenMintAddress });
 
       // Validate inputs
       if (!recipientAddress || !this.solanaService.isValidSolanaAddress(recipientAddress)) {
@@ -94,7 +94,7 @@ class TokenService {
         logger.warn(`Server SOL balance is low (${serverSolBalance} SOL). On-chain transactions (deposits) might fail due to gas fees.`);
       }
 
-      logger.info('Preparing Magicblock USDC private transfer', {
+      logger.info('Preparing Magicblock SOL private transfer', {
         amount: amount,
         recipient: recipientAddress,
         mint: this.tokenMintAddress
