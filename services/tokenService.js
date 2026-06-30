@@ -10,12 +10,9 @@ const logger = require('../utils/logger');
 class TokenService {
   constructor() {
     this.solanaService = new SolanaService();
-    this.tokenMintAddress = process.env.TOKEN_MINT_ADDRESS || null;
-    if (this.tokenMintAddress) {
-      console.log(`ℹ️ Reward Service initialized for Token distribution: ${this.tokenMintAddress}`);
-    } else {
-      console.log(`ℹ️ Reward Service initialized for SOL distribution.`);
-    }
+    // Default to devnet USDC mint if TOKEN_MINT_ADDRESS is not set
+    this.tokenMintAddress = process.env.TOKEN_MINT_ADDRESS || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
+    console.log(`ℹ️ Reward Service initialized for USDC private distribution via Magicblock (mint: ${this.tokenMintAddress})`);
   }
 
   /**
@@ -25,7 +22,7 @@ class TokenService {
    * @returns {Promise<string>} Transaction signature
    */
   async transferSol(recipientAddress, amount) {
-    logger.info('Delegating transfer request to Magicblock', { recipient: recipientAddress, amount });
+    logger.info('Delegating USDC transfer request to Magicblock private payments', { recipient: recipientAddress, amount });
     return this.transferSolMagicblock(recipientAddress, amount);
   }
 
@@ -67,8 +64,7 @@ class TokenService {
    */
   async transferSolMagicblock(recipientAddress, amount) {
     try {
-      const isToken = !!this.tokenMintAddress;
-      logger.info(isToken ? 'Starting Token transfer via Magicblock' : 'Starting SOL transfer via Magicblock', { recipient: recipientAddress, amount });
+      logger.info('Starting USDC private transfer via Magicblock ephemeral rollup', { recipient: recipientAddress, amount, mint: this.tokenMintAddress });
 
       // Validate inputs
       if (!recipientAddress || !this.solanaService.isValidSolanaAddress(recipientAddress)) {
@@ -95,10 +91,10 @@ class TokenService {
 
       // Ensure we have enough SOL for transaction fees
       if (serverSolBalance < 0.01) {
-        logger.warn(`Server SOL balance is low (${serverSolBalance} SOL). Transaction might fail due to gas fees.`);
+        logger.warn(`Server SOL balance is low (${serverSolBalance} SOL). On-chain transactions (deposits) might fail due to gas fees.`);
       }
 
-      logger.info(isToken ? 'Preparing Magicblock Token transfer' : 'Preparing Magicblock SOL transfer', {
+      logger.info('Preparing Magicblock USDC private transfer', {
         amount: amount,
         recipient: recipientAddress,
         mint: this.tokenMintAddress

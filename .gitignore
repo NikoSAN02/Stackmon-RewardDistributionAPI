@@ -4,3 +4,4 @@ logs/
 
 private_key_input.txt
 output_key.json
+scratch/

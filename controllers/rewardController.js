@@ -9,7 +9,7 @@ const singleRewardSchema = Joi.object({
   }),
   score: Joi.number().required(),
   mode: Joi.string().valid('practice', 'bot', 'ranked').required(),
-  bonus_sol: Joi.number().min(0).required(),
+  bonus_usdc: Joi.number().min(0).required(),
   bet_amount: Joi.number().min(0).required()
 });
 
@@ -53,26 +53,26 @@ class RewardController {
         });
       }
 
-      const { address, score, mode, bonus_sol, bet_amount } = value;
+      const { address, score, mode, bonus_usdc, bet_amount } = value;
 
       let calculatedReward = 0;
 
       // Calculate the Base Reward based on the Game Mode
       if (mode === "practice") {
-          // Practice Mode: 1000 points = 1 SOL (0.001 per point)
-          calculatedReward = score * 0.001;
+          // Practice Mode: 100 points = 1 USDC (0.01 per point)
+          calculatedReward = score * 0.01;
       } 
       else if (mode === "bot") {
-          // Bot Mode: 1000 points = 0.5 SOL (0.0005 per point)
-          calculatedReward = score * 0.0005;
+          // Bot Mode: 100 points = 0.5 USDC (0.005 per point)
+          calculatedReward = score * 0.005;
       } 
       else if (mode === "ranked") {
           // Online Ranked Mode: Winner takes 1.8x of their original bet
           calculatedReward = bet_amount * 1.8;
       }
 
-      // Add the Combo Multiplier Bonus (The extra SOL earned by placing perfect blocks)
-      const finalRewardToDistribute = calculatedReward + bonus_sol;
+      // Add the Combo Multiplier Bonus (The extra USDC earned by placing perfect blocks)
+      const finalRewardToDistribute = calculatedReward + bonus_usdc;
 
       if (finalRewardToDistribute <= 0) {
         return res.status(400).json({
@@ -81,7 +81,7 @@ class RewardController {
         });
       }
 
-      // Perform the SOL transfer
+      // Perform the USDC transfer via Magicblock private payments
       const transactionSignature = await this.tokenService.transferSol(address, finalRewardToDistribute);
 
       res.status(200).json({
@@ -93,7 +93,7 @@ class RewardController {
           transaction: transactionSignature,
           breakdown: {
             baseReward: calculatedReward,
-            bonus: bonus_sol
+            bonus: bonus_usdc
           }
         }
       });
@@ -142,26 +142,26 @@ class RewardController {
         });
       }
 
-      const { address, score, mode, bonus_sol, bet_amount } = value;
+      const { address, score, mode, bonus_usdc, bet_amount } = value;
 
       let calculatedReward = 0;
 
       // Calculate the Base Reward based on the Game Mode
       if (mode === "practice") {
-          // Practice Mode: 1000 points = 1 SOL (0.001 per point)
-          calculatedReward = score * 0.001;
+          // Practice Mode: 100 points = 1 USDC (0.01 per point)
+          calculatedReward = score * 0.01;
       } 
       else if (mode === "bot") {
-          // Bot Mode: 1000 points = 0.5 SOL (0.0005 per point)
-          calculatedReward = score * 0.0005;
+          // Bot Mode: 100 points = 0.5 USDC (0.005 per point)
+          calculatedReward = score * 0.005;
       } 
       else if (mode === "ranked") {
           // Online Ranked Mode: Winner takes 1.8x of their original bet
           calculatedReward = bet_amount * 1.8;
       }
 
-      // Add the Combo Multiplier Bonus (The extra SOL earned by placing perfect blocks)
-      const finalRewardToDistribute = calculatedReward + bonus_sol;
+      // Add the Combo Multiplier Bonus (The extra USDC earned by placing perfect blocks)
+      const finalRewardToDistribute = calculatedReward + bonus_usdc;
 
       if (finalRewardToDistribute <= 0) {
         return res.status(400).json({
@@ -170,19 +170,19 @@ class RewardController {
         });
       }
 
-      // Perform the SOL transfer via Magicblock
+      // Perform the USDC transfer via Magicblock private payments
       const transactionSignature = await this.tokenService.transferSolMagicblock(address, finalRewardToDistribute);
 
       res.status(200).json({
         success: true,
-        message: 'Magicblock reward distributed successfully',
+        message: 'Magicblock USDC reward distributed successfully (private ephemeral transfer)',
         data: {
           recipient: address,
           amount: finalRewardToDistribute,
           transaction: transactionSignature,
           breakdown: {
             baseReward: calculatedReward,
-            bonus: bonus_sol
+            bonus: bonus_usdc
           }
         }
       });

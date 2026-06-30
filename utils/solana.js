@@ -22,6 +22,17 @@ const {
 const bs58Lib = require('bs58');
 const bs58 = bs58Lib.default || bs58Lib;
 const axios = require('axios');
+const nacl = require('tweetnacl');
+
+// Devnet USDC Mint Address
+const USDC_DEVNET_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
+
+// Magicblock Private Payments API base URL
+const MAGICBLOCK_API_URL = 'https://payments.magicblock.app';
+
+// Minimum deposit amount in USDC base units (5 USDC = 5_000_000)
+// This avoids repeated tiny deposits for every transfer
+const MIN_DEPOSIT_AMOUNT = 5_000_000;
 
 class SolanaService {
   constructor() {
@@ -92,6 +103,10 @@ class SolanaService {
         throw new Error(`Invalid server wallet private key: ${error.message}`);
       }
     }
+
+    // Cached Magicblock auth token
+    this._magicblockAuthToken = null;
+    this._magicblockAuthTokenExpiry = 0;
   }
 
   /**
@@ -407,11 +422,157 @@ class SolanaService {
     }
   }
 
+  // ─── Magicblock Private Payments: Authentication ────────────────────────
+
   /**
-   * Transfer SOL or an SPL Token to a recipient using Magicblock's Private Payments API
+   * Authenticate with Magicblock's Private Ephemeral Rollup.
+   * Uses challenge-response signing to obtain a bearer token.
+   * Caches the token for 25 minutes (tokens typically expire after 30 min).
+   * @returns {Promise<string>} Bearer token
+   */
+  async getMagicblockAuthToken() {
+    // Return cached token if still valid
+    if (this._magicblockAuthToken && Date.now() < this._magicblockAuthTokenExpiry) {
+      return this._magicblockAuthToken;
+    }
+
+    const pubkey = this.serverWallet.publicKey.toBase58();
+    console.log(`🔑 Authenticating with Magicblock PER for wallet ${pubkey}...`);
+
+    // Step 1: Request a challenge
+    const challengeRes = await axios.get(`${MAGICBLOCK_API_URL}/v1/spl/challenge`, {
+      params: { pubkey, cluster: this.network }
+    });
+
+    const challenge = challengeRes.data.challenge;
+    if (!challenge) {
+      throw new Error('Magicblock API returned empty challenge');
+    }
+
+    // Step 2: Sign the challenge with the server wallet
+    const messageBytes = Buffer.from(challenge);
+    const signature = nacl.sign.detached(messageBytes, this.serverWallet.secretKey);
+    const signatureBase58 = bs58.encode(signature);
+
+    // Step 3: Login
+    const loginRes = await axios.post(`${MAGICBLOCK_API_URL}/v1/spl/login`, {
+      pubkey,
+      challenge,
+      signature: signatureBase58,
+      cluster: this.network
+    });
+
+    const token = loginRes.data.token;
+    if (!token) {
+      throw new Error('Magicblock API login did not return a token');
+    }
+
+    // Cache the token for 25 minutes
+    this._magicblockAuthToken = token;
+    this._magicblockAuthTokenExpiry = Date.now() + 25 * 60 * 1000;
+
+    console.log(`✅ Magicblock PER authentication successful`);
+    return token;
+  }
+
+  // ─── Magicblock Private Payments: Private Balance ──────────────────────
+
+  /**
+   * Get the server wallet's ephemeral (private) balance for a given mint.
+   * @param {string} [mintAddress] - SPL mint address (defaults to devnet USDC)
+   * @returns {Promise<number>} Balance in base units (e.g. 1_000_000 = 1 USDC)
+   */
+  async getMagicblockPrivateBalance(mintAddress) {
+    const mint = mintAddress || USDC_DEVNET_MINT;
+    const pubkey = this.serverWallet.publicKey.toBase58();
+
+    const token = await this.getMagicblockAuthToken();
+
+    const res = await axios.get(`${MAGICBLOCK_API_URL}/v1/spl/private-balance`, {
+      params: { address: pubkey, mint, cluster: this.network },
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    const balance = parseInt(res.data.balance, 10) || 0;
+    console.log(`💰 Magicblock ephemeral balance: ${balance} base units (mint: ${mint})`);
+    return balance;
+  }
+
+  // ─── Magicblock Private Payments: Deposit into PER ─────────────────────
+
+  /**
+   * Deposit SPL tokens from the server's base (on-chain) balance into the
+   * Private Ephemeral Rollup. This "shields" the tokens.
+   * @param {number} amount - Amount in base units to deposit
+   * @param {string} [mintAddress] - SPL mint address (defaults to devnet USDC)
+   * @returns {Promise<string>} Transaction signature of the deposit
+   */
+  async depositToMagicblockPER(amount, mintAddress) {
+    const mint = mintAddress || USDC_DEVNET_MINT;
+    console.log(`📥 Depositing ${amount} base units of ${mint} into Magicblock PER...`);
+
+    // Request an unsigned deposit transaction from Magicblock
+    const depositPayload = {
+      owner: this.serverWallet.publicKey.toBase58(),
+      mint,
+      amount,
+      cluster: this.network,
+      initIfMissing: true,
+      initVaultIfMissing: true,
+      initAtasIfMissing: true,
+      idempotent: true
+    };
+
+    const response = await axios.post(`${MAGICBLOCK_API_URL}/v1/spl/deposit`, depositPayload);
+
+    if (!response.data || !response.data.transactionBase64) {
+      throw new Error('Invalid response from Magicblock deposit API');
+    }
+
+    // Sign and send the deposit transaction
+    const transactionBuffer = Buffer.from(response.data.transactionBase64, 'base64');
+    let signature;
+
+    const connectionToSend = response.data.sendRpcEndpoint
+      ? new Connection(response.data.sendRpcEndpoint, 'confirmed')
+      : this.connection;
+
+    if (response.data.version === 'v0') {
+      const versionedTransaction = VersionedTransaction.deserialize(transactionBuffer);
+      versionedTransaction.sign([this.serverWallet]);
+      signature = await connectionToSend.sendTransaction(versionedTransaction, { skipPreflight: true });
+    } else {
+      const transaction = Transaction.from(transactionBuffer);
+      transaction.sign(this.serverWallet);
+      signature = await connectionToSend.sendRawTransaction(transaction.serialize(), { skipPreflight: true });
+    }
+
+    // Confirm the deposit
+    const latestBlockHash = await connectionToSend.getLatestBlockhash();
+    await connectionToSend.confirmTransaction({
+      blockhash: latestBlockHash.blockhash,
+      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+      signature,
+    });
+
+    console.log(`✅ Deposit confirmed. Signature: ${signature}`);
+    return signature;
+  }
+
+  // ─── Magicblock Private Payments: Ephemeral Transfer ───────────────────
+
+  /**
+   * Transfer USDC to a recipient using Magicblock's Private Payments API.
+   * Uses ephemeral-to-ephemeral transfer for full privacy.
+   *
+   * Before transferring, this method:
+   * 1. Checks the server's ephemeral balance.
+   * 2. If insufficient, deposits more USDC from the base chain into the PER.
+   * 3. Executes the private ephemeral-to-ephemeral transfer.
+   *
    * @param {string} recipientAddress - Recipient's Solana wallet address
-   * @param {number} amount - Amount of SOL or tokens to transfer
-   * @param {string} [tokenMintAddress] - Optional SPL token mint address
+   * @param {number} amount - Amount of USDC to transfer (UI amount, e.g. 1.5 = 1.5 USDC)
+   * @param {string} [tokenMintAddress] - Optional SPL token mint address (defaults to devnet USDC)
    * @returns {Promise<string>} Transaction signature
    */
   async transferMagicblock(recipientAddress, amount, tokenMintAddress) {
@@ -421,123 +582,117 @@ class SolanaService {
         throw new Error('Invalid recipient address');
       }
 
-      let mintStr = "So11111111111111111111111111111111111111112"; // Default to WSOL
-      let decimals = 9; // SOL has 9 decimals
-      let isSol = true;
+      // Default to devnet USDC
+      const mintStr = (tokenMintAddress && this.isValidSolanaAddress(tokenMintAddress))
+        ? tokenMintAddress
+        : USDC_DEVNET_MINT;
 
-      if (tokenMintAddress && this.isValidSolanaAddress(tokenMintAddress)) {
-        mintStr = tokenMintAddress;
-        decimals = await this.getMintDecimals(new PublicKey(tokenMintAddress));
-        isSol = false;
-      }
-
+      // Get decimals for the mint (USDC = 6)
+      const decimals = await this.getMintDecimals(new PublicKey(mintStr));
       const rawAmount = Math.round(amount * Math.pow(10, decimals));
 
-      if (isSol) {
-        // Check SOL balance
-        const balance = await this.connection.getBalance(this.serverWallet.publicKey);
-        if (balance < rawAmount + 5000) {
-          throw new Error(`Insufficient SOL balance. Available: ${balance / LAMPORTS_PER_SOL}, Required: ${amount} + fees`);
-        }
+      if (rawAmount <= 0) {
+        throw new Error(`Transfer amount must be positive. Got: ${amount} (${rawAmount} base units)`);
+      }
 
-        // Request Magicblock API
-        const WSOL_MINT = new PublicKey("So11111111111111111111111111111111111111112");
-        const ata = await getAssociatedTokenAddress(WSOL_MINT, this.serverWallet.publicKey);
-        
-        const wsolInfo = await this.connection.getAccountInfo(ata);
-        let wsolBalance = 0;
-        if (wsolInfo) {
-            const tokenAccountBalance = await this.connection.getTokenAccountBalance(ata);
-            wsolBalance = parseInt(tokenAccountBalance.value.amount, 10);
-        }
+      console.log(`🔄 Preparing Magicblock private transfer: ${amount} (${rawAmount} base units) of mint ${mintStr} to ${recipientAddress}`);
 
-        // Check if we need to wrap more SOL
-        const magicblockFee = 1000000;
-        const margin = 10000000;
-        const requiredWsol = rawAmount + magicblockFee + margin;
-        
-        if (wsolBalance < requiredWsol) {
-            const wrapAmount = requiredWsol - wsolBalance;
-            console.log(`Insufficient WSOL. Wrapping ${wrapAmount} lamports...`);
-            const wrapTx = new Transaction();
-            if (!wsolInfo) {
-                wrapTx.add(createAssociatedTokenAccountInstruction(
-                    this.serverWallet.publicKey,
-                    ata,
-                    this.serverWallet.publicKey,
-                    WSOL_MINT
-                ));
-            }
-            wrapTx.add(SystemProgram.transfer({
-                fromPubkey: this.serverWallet.publicKey,
-                toPubkey: ata,
-                lamports: wrapAmount
-            }));
-            wrapTx.add(createSyncNativeInstruction(ata));
+      // ── Step 1: Check & top-up server's ephemeral balance ──────────
+      let ephemeralBalance;
+      try {
+        ephemeralBalance = await this.getMagicblockPrivateBalance(mintStr);
+      } catch (balanceErr) {
+        console.warn(`⚠️ Could not fetch ephemeral balance (${balanceErr.message}). Will attempt transfer anyway.`);
+        ephemeralBalance = null; // proceed optimistically
+      }
 
-            const sig = await this.connection.sendTransaction(wrapTx, [this.serverWallet]);
-            await this.connection.confirmTransaction(sig);
-            console.log(`WSOL Wrapped successfully. Signature: ${sig}`);
-        }
-      } else {
-        // For SPL tokens, ensure the server has enough balance
-        const programId = await this.getMintProgramId(new PublicKey(tokenMintAddress));
+      if (ephemeralBalance !== null && ephemeralBalance < rawAmount) {
+        const shortfall = rawAmount - ephemeralBalance;
+        const depositAmount = Math.max(shortfall, MIN_DEPOSIT_AMOUNT);
+
+        console.log(`📉 Ephemeral balance (${ephemeralBalance}) < required (${rawAmount}). Depositing ${depositAmount} base units...`);
+
+        // Verify the server has enough base (on-chain) USDC to deposit
+        const mintPubkey = new PublicKey(mintStr);
+        const programId = await this.getMintProgramId(mintPubkey);
         const serverATA = await getOrCreateAssociatedTokenAccount(
           this.connection,
-          this.serverWallet, // Payer
-          new PublicKey(tokenMintAddress),
-          this.serverWallet.publicKey, // Owner
+          this.serverWallet,
+          mintPubkey,
+          this.serverWallet.publicKey,
           true,
           'confirmed',
           undefined,
           programId
         );
-        const accountInfo = await this.connection.getTokenAccountBalance(serverATA.address);
-        if (BigInt(accountInfo.value.amount) < BigInt(rawAmount)) {
-          throw new Error(`Insufficient token balance. Available: ${accountInfo.value.uiAmount}, Required: ${amount}`);
+        const baseBalance = await this.connection.getTokenAccountBalance(serverATA.address);
+        const baseAmount = BigInt(baseBalance.value.amount);
+
+        if (baseAmount < BigInt(depositAmount)) {
+          throw new Error(
+            `Insufficient USDC balance for deposit. ` +
+            `Base chain balance: ${baseBalance.value.uiAmountString} USDC, ` +
+            `needed to deposit: ${depositAmount / Math.pow(10, decimals)} USDC. ` +
+            `Please fund the server wallet (${this.serverWallet.publicKey.toBase58()}) with more USDC.`
+          );
         }
+
+        // Perform the deposit into PER
+        await this.depositToMagicblockPER(depositAmount, mintStr);
+
+        // Brief pause to allow PER state to sync
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
 
+      // ── Step 2: Execute the private ephemeral-to-ephemeral transfer ─
       const payload = {
         from: this.serverWallet.publicKey.toBase58(),
         to: recipientAddress,
         mint: mintStr,
         amount: rawAmount,
         visibility: "private",
-        fromBalance: "base",
-        toBalance: "base",
+        fromBalance: "ephemeral",
+        toBalance: "ephemeral",
         cluster: this.network,
-        wrapAndUnwrapSol: isSol
+        wrapAndUnwrapSol: false,
+        initIfMissing: true,
+        initAtasIfMissing: true,
+        initVaultIfMissing: true
       };
 
-      console.log(`Requesting Magicblock transfer for ${amount} of ${mintStr} to ${recipientAddress} via ${this.network}`);
-      const response = await axios.post('https://payments.magicblock.app/v1/spl/transfer', payload);
+      console.log(`📤 Requesting Magicblock private transfer...`);
+      const response = await axios.post(`${MAGICBLOCK_API_URL}/v1/spl/transfer`, payload);
 
       if (!response.data || !response.data.transactionBase64) {
-        throw new Error('Invalid response from Magicblock API');
+        throw new Error('Invalid response from Magicblock transfer API');
       }
 
       const transactionBuffer = Buffer.from(response.data.transactionBase64, 'base64');
-      
+
+      const connectionToSend = response.data.sendRpcEndpoint
+        ? new Connection(response.data.sendRpcEndpoint, 'confirmed')
+        : this.connection;
+
       let signature;
       if (response.data.version === 'v0') {
         const versionedTransaction = VersionedTransaction.deserialize(transactionBuffer);
         versionedTransaction.sign([this.serverWallet]);
-        signature = await this.connection.sendTransaction(versionedTransaction);
+        signature = await connectionToSend.sendTransaction(versionedTransaction, { skipPreflight: true });
       } else {
         const transaction = Transaction.from(transactionBuffer);
         transaction.sign(this.serverWallet);
-        signature = await this.connection.sendRawTransaction(transaction.serialize());
+        signature = await connectionToSend.sendRawTransaction(transaction.serialize(), { skipPreflight: true });
       }
 
-      // Confirm transaction
-      const latestBlockHash = await this.connection.getLatestBlockhash();
-      await this.connection.confirmTransaction({
+      // Confirm the transfer transaction
+      const latestBlockHash = await connectionToSend.getLatestBlockhash();
+      await connectionToSend.confirmTransaction({
         blockhash: latestBlockHash.blockhash,
         lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
-        signature: signature,
+        signature,
       });
 
+      console.log(`✅ Magicblock private transfer confirmed. Signature: ${signature}`);
       return signature;
     } catch (error) {
       if (error.logs) {
@@ -545,8 +700,22 @@ class SolanaService {
       } else if (typeof error.getLogs === 'function') {
          console.error('Transaction logs:', error.getLogs());
       }
+
+      const apiErrorMsg = error?.response?.data?.error?.message || error?.response?.data?.message;
+      const errorDetail = apiErrorMsg || error.message;
+
+      // Provide actionable error if the recipient hasn't deposited into PER
+      if (errorDetail && (errorDetail.includes('account not found') || errorDetail.includes('not initialized') || errorDetail.includes('not delegated'))) {
+        console.error(`❌ Recipient ${recipientAddress} has not deposited into the Magicblock PER.`);
+        throw new Error(
+          `Recipient wallet ${recipientAddress} has not deposited into the Private Ephemeral Rollup (PER). ` +
+          `The recipient must first deposit USDC into the PER before they can receive private transfers. ` +
+          `Original error: ${errorDetail}`
+        );
+      }
+
       console.error('Error in transferMagicblock:', error?.response?.data || error);
-      throw new Error(`Failed to transfer via Magicblock: ${error?.response?.data?.error?.message || error.message}`);
+      throw new Error(`Failed to transfer via Magicblock: ${errorDetail}`);
     }
   }
 }
