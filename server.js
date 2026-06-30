@@ -36,7 +36,7 @@ app.use(helmet({
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: ["'self'", "data:", "validator.swagger.io"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "https://unpkg.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://unpkg.com", "https://cdn.jsdelivr.net"],
       fontSrc: ["'self'", "https:", "data:", "https://fonts.gstatic.com"],
       connectSrc: ["'self'", "https:", "wss:"],
     },
