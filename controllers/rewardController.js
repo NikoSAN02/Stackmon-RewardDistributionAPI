@@ -9,7 +9,7 @@ const singleRewardSchema = Joi.object({
   }),
   score: Joi.number().required(),
   mode: Joi.string().valid('practice', 'bot', 'ranked').required(),
-  bonus_usdc: Joi.number().min(0).required(),
+  bonus_sol: Joi.number().min(0).required(),
   bet_amount: Joi.number().min(0).required()
 });
 
@@ -53,7 +53,7 @@ class RewardController {
         });
       }
 
-      const { address, score, mode, bonus_usdc, bet_amount } = value;
+      const { address, score, mode, bonus_sol, bet_amount } = value;
 
       let calculatedReward = 0;
 
@@ -72,7 +72,7 @@ class RewardController {
       }
 
       // Add the Combo Multiplier Bonus (The extra USDC earned by placing perfect blocks)
-      const finalRewardToDistribute = calculatedReward + bonus_usdc;
+      const finalRewardToDistribute = calculatedReward + bonus_sol;
 
       if (finalRewardToDistribute <= 0) {
         return res.status(400).json({
@@ -93,7 +93,7 @@ class RewardController {
           transaction: transactionSignature,
           breakdown: {
             baseReward: calculatedReward,
-            bonus: bonus_usdc
+            bonus: bonus_sol
           }
         }
       });
@@ -142,7 +142,7 @@ class RewardController {
         });
       }
 
-      const { address, score, mode, bonus_usdc, bet_amount } = value;
+      const { address, score, mode, bonus_sol, bet_amount } = value;
 
       let calculatedReward = 0;
 
@@ -161,7 +161,7 @@ class RewardController {
       }
 
       // Add the Combo Multiplier Bonus (The extra USDC earned by placing perfect blocks)
-      const finalRewardToDistribute = calculatedReward + bonus_usdc;
+      const finalRewardToDistribute = calculatedReward + bonus_sol;
 
       if (finalRewardToDistribute <= 0) {
         return res.status(400).json({
@@ -182,7 +182,7 @@ class RewardController {
           transaction: transactionSignature,
           breakdown: {
             baseReward: calculatedReward,
-            bonus: bonus_usdc
+            bonus: bonus_sol
           }
         }
       });
