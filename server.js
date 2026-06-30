@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
 const RewardController = require('./controllers/rewardController');
 const UserStatsController = require('./controllers/userStatsController');
 const { unityValidationMiddleware } = require('./middleware/unityValidation');
@@ -84,6 +85,11 @@ app.use((req, res, next) => {
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// Serve browser demo page at root
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public/index.html'));
 });
 
 // Get server wallet balance
