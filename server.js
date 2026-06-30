@@ -48,6 +48,7 @@ app.use(helmet({
 app.use(cors({
   origin: [
     'https://stackmon.fun', 
+    'https://www.stackmon.fun', 
     'https://killers-area-sol-reward-distributio.vercel.app', 
     'http://localhost:3000',
     'https://crashdash.xyz',
@@ -55,7 +56,6 @@ app.use(cors({
     'https://crashy-chasy.vercel.app'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-unity-validation'],
   credentials: true,
   optionsSuccessStatus: 200
 }));
