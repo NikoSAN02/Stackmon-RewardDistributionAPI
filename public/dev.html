@@ -10,6 +10,9 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <!-- Solana Web3.js CDN (IIFE bundle - exposes window.solanaWeb3) -->
   <script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.95.3/lib/index.iife.min.js"></script>
+  <!-- Buffer polyfill: the Solana IIFE uses Buffer internally but doesn't expose it globally -->
+  <script src="https://cdn.jsdelivr.net/npm/buffer@6.0.3/index.min.js"></script>
+  <script>if (typeof window.Buffer === 'undefined' && typeof Buffer !== 'undefined') window.Buffer = Buffer;</script>
   <!-- CSS Styling -->
   <link rel="stylesheet" href="dev-style.css">
 </head>
