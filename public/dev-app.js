@@ -19,11 +19,13 @@ let serverWalletAddress = '';
 const btnConnect = document.getElementById('btn-connect');
 const srvPubkey = document.getElementById('srv-pubkey');
 const srvSol = document.getElementById('srv-sol');
+const srvUsdcBase = document.getElementById('srv-usdc-base');
 const srvUsdcPer = document.getElementById('srv-usdc-per');
 const btnRefreshServer = document.getElementById('btn-refresh-server');
 
 const userPubkey = document.getElementById('user-pubkey');
 const userSol = document.getElementById('user-sol');
+const userUsdcBase = document.getElementById('user-usdc-base');
 const userUsdcPer = document.getElementById('user-usdc-per');
 const btnRefreshUser = document.getElementById('btn-refresh-user');
 
@@ -247,6 +249,7 @@ async function refreshServerStats() {
     }
     
     srvSol.innerText = data.solBalance.toFixed(4);
+    srvUsdcBase.innerText = data.baseWsolBalance.toFixed(4);
     srvUsdcPer.innerText = data.ephemeralWsolBalance.toFixed(4);
     
     log('Server balance diagnostics updated successfully.', 'success');
@@ -268,7 +271,19 @@ async function refreshUserStats() {
     const solLamports = await connection.getBalance(userWallet);
     userSol.innerText = (solLamports / solanaWeb3.LAMPORTS_PER_SOL).toFixed(4);
     
-    // 2. Fetch Ephemeral SOL Balance (PER)
+    // 2. Fetch Base WSOL Balance
+    userUsdcBase.innerText = 'Loading...';
+    const mintPubkey = new solanaWeb3.PublicKey(WSOL_DEVNET_MINT);
+    const userATA = getAssociatedTokenAddress(userWallet, mintPubkey);
+    
+    try {
+      const tokenBal = await connection.getTokenAccountBalance(userATA);
+      userUsdcBase.innerText = (parseInt(tokenBal.value.amount, 10) / 1_000_000_000).toFixed(4);
+    } catch (ataErr) {
+      userUsdcBase.innerText = '0.0000'; // account doesn't exist
+    }
+    
+    // 3. Fetch Ephemeral SOL Balance (PER)
     if (userToken && Date.now() < userTokenExpiry) {
       userUsdcPer.innerText = 'Loading...';
       const pubkeyStr = userWallet.toBase58();
