@@ -88,6 +88,13 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
+// Config info endpoint
+app.get('/info', (req, res) => {
+  res.json({
+    mint: process.env.TOKEN_MINT_ADDRESS || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+  });
+});
+
 // Serve browser demo page at root
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public/index.html'));

@@ -349,7 +349,7 @@
                 <span>Claim Successful!</span>
             </div>
             <div class="result-details">
-                <div><strong>Amount Claimed:</strong> <span id="res-amount">0.00</span> USDC</div>
+                <div><strong>Amount Claimed:</strong> <span id="res-amount">0.00</span> <span id="res-token-symbol">USDC</span></div>
                 <div><strong>Transaction Signature:</strong></div>
                 <a id="res-tx" class="tx-link" href="#" target="_blank"></a>
             </div>
@@ -370,8 +370,33 @@
     const resultBox = document.getElementById('result-box');
     const resAmount = document.getElementById('res-amount');
     const resTx = document.getElementById('res-tx');
+    const resTokenSymbol = document.getElementById('res-token-symbol');
 
     let userPublicKey = null;
+    let tokenSymbol = 'USDC';
+
+    async function loadConfig() {
+        try {
+            const res = await fetch('/info');
+            const data = await res.json();
+            if (data.mint === 'So11111111111111111111111111111111111111112') {
+                tokenSymbol = 'SOL';
+                resTokenSymbol.textContent = 'SOL';
+                // Update UI text
+                document.title = "StackMon SOL Reward Claim Portal";
+                document.querySelector('h1').innerHTML = '<i data-lucide="award" size="36"></i> StackMon SOL Rewards';
+                document.querySelector('.subtitle').textContent = 'SOL Distribution via Magicblock';
+                btnClaim.innerHTML = '<i data-lucide="shield" size="18"></i> Claim SOL (Magicblock Multi-Sig)';
+                btnClaimStandard.innerHTML = '<i data-lucide="send" size="18"></i> Claim SOL (Instant, No Signatures)';
+                document.querySelector('.info-box span').innerHTML = '<strong>Private Claim:</strong> Prompts your wallet to sign the transaction to claim and unwrap your SOL. <br><strong>Standard Claim:</strong> The backend signs and sends the SOL directly to your base Solana wallet with zero user setup (failsafe fallback).';
+                lucide.createIcons();
+            }
+        } catch (e) {
+            console.error('Failed to load config:', e);
+        }
+    }
+
+    loadConfig();
 
     // Resolve the Phantom provider dynamically to avoid extension injection race conditions
     function getProvider() {
@@ -474,9 +499,10 @@
                 signedTransaction = await provider.signTransaction(tx);
             }
 
-            // Step 3: Submit signed transaction to MagicBlock Ephemeral RPC
-            console.log(`Submitting signed transaction to MagicBlock RPC: ${sendRpcEndpoint}...`);
-            const connection = new solanaWeb3.Connection(sendRpcEndpoint, 'confirmed');
+            // Step 3: Submit signed transaction to RPC (MagicBlock or Devnet)
+            const rpcUrl = sendRpcEndpoint || 'https://api.devnet.solana.com';
+            console.log(`Submitting signed transaction to RPC: ${rpcUrl}...`);
+            const connection = new solanaWeb3.Connection(rpcUrl, 'confirmed');
             
             let signature;
             if (version === 'v0') {
@@ -501,7 +527,11 @@
             // Display success UI
             resAmount.textContent = setupData.data.amount;
             resTx.textContent = `${signature.slice(0, 8)}...${signature.slice(-8)}`;
-            resTx.href = `https://explorer.solana.com/tx/${signature}?cluster=custom&customUrl=${encodeURIComponent(sendRpcEndpoint)}`;
+            if (sendRpcEndpoint) {
+                resTx.href = `https://explorer.solana.com/tx/${signature}?cluster=custom&customUrl=${encodeURIComponent(sendRpcEndpoint)}`;
+            } else {
+                resTx.href = `https://explorer.solana.com/tx/${signature}?cluster=devnet`;
+            }
             resultBox.style.display = 'flex';
 
         } catch (err) {
@@ -509,7 +539,7 @@
             alert(`Claim failed: ${err.message}`);
         } finally {
             btnClaim.disabled = false;
-            btnClaim.innerHTML = '<i data-lucide="shield" size="18"></i> Claim Private USDC (Multi-Sig PER)';
+            btnClaim.innerHTML = `<i data-lucide="shield" size="18"></i> Claim ${tokenSymbol === 'SOL' ? 'SOL (Magicblock Multi-Sig)' : 'Private USDC (Multi-Sig PER)'}`;
             lucide.createIcons();
         }
     }
@@ -558,7 +588,7 @@
             alert(`Standard claim failed: ${err.message}`);
         } finally {
             btnClaimStandard.disabled = false;
-            btnClaimStandard.innerHTML = '<i data-lucide="send" size="18"></i> Claim Standard USDC (Instant, No Signatures)';
+            btnClaimStandard.innerHTML = `<i data-lucide="send" size="18"></i> Claim ${tokenSymbol === 'SOL' ? 'SOL (Instant, No Signatures)' : 'Standard USDC (Instant, No Signatures)'}`;
             lucide.createIcons();
         }
     }

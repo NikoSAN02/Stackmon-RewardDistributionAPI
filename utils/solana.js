@@ -354,6 +354,12 @@ class SolanaService {
   async transferSplToken(recipientAddress, amount, tokenMintAddress) {
     this.checkInit();
     try {
+      // Dynamic fallback for SOL (Wrapped SOL mint) to transfer native SOL directly
+      if (tokenMintAddress && tokenMintAddress.toBase58() === 'So11111111111111111111111111111111111111112') {
+        console.log(`Redirecting to native SOL transfer for recipient: ${recipientAddress}`);
+        return await this.transferSol(recipientAddress, amount);
+      }
+
       console.log(`Starting SPL Token Transfer: ${amount} to ${recipientAddress}`);
 
       // 1. Validate Recipient
@@ -827,6 +833,51 @@ class SolanaService {
     return signature;
   }
 
+  // ─── Magicblock Private Payments: SOL wrapping ─────────────────────────
+
+  /**
+   * Wrap native SOL into Wrapped SOL (wSOL) for the server wallet
+   * @param {number} amountRaw - Amount in lamports (base units) to wrap
+   */
+  async wrapSol(amountRaw) {
+    this.checkInit();
+    try {
+      const wsolMint = new PublicKey('So11111111111111111111111111111111111111112');
+      const serverWsolAta = await getOrCreateAssociatedTokenAccount(
+        this.connection,
+        this.serverWallet,
+        wsolMint,
+        this.serverWallet.publicKey,
+        true,
+        'confirmed'
+      );
+
+      // Create transaction to send SOL to the wSOL ATA and sync it
+      const transaction = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: this.serverWallet.publicKey,
+          toPubkey: serverWsolAta.address,
+          lamports: amountRaw
+        }),
+        createSyncNativeInstruction(serverWsolAta.address)
+      );
+
+      const signature = await this.connection.sendTransaction(transaction, [this.serverWallet]);
+      const latestBlock = await this.connection.getLatestBlockhash();
+      await this.connection.confirmTransaction({
+        blockhash: latestBlock.blockhash,
+        lastValidBlockHeight: latestBlock.lastValidBlockHeight,
+        signature
+      });
+
+      console.log(`✅ Successfully wrapped ${amountRaw / 1e9} SOL to wSOL. Signature: ${signature}`);
+      return signature;
+    } catch (error) {
+      console.error('Error wrapping SOL:', error);
+      throw new Error(`Failed to wrap SOL: ${error.message}`);
+    }
+  }
+
   // ─── Magicblock Private Payments: Ephemeral Transfer ───────────────────
 
   /**
@@ -914,10 +965,12 @@ class SolanaService {
         ? tokenMintAddress
         : USDC_DEVNET_MINT;
 
+      const isWsol = mintStr === 'So11111111111111111111111111111111111111112';
+
       // Ensure the mint is initialized before transfer
       await this.initializeMintIfNeeded(mintStr);
 
-      // Get decimals for the mint (USDC = 6)
+      // Get decimals for the mint (USDC = 6, wSOL = 9)
       const decimals = await this.getMintDecimals(new PublicKey(mintStr));
       const rawAmount = Math.round(amount * Math.pow(10, decimals));
 
@@ -942,7 +995,7 @@ class SolanaService {
 
         console.log(`📉 Ephemeral balance (${ephemeralBalance}) < required (${rawAmount}). Depositing ${depositAmount} base units...`);
 
-        // Verify the server has enough base (on-chain) USDC to deposit
+        // Verify the server has enough base (on-chain) USDC/wSOL to deposit
         const mintPubkey = new PublicKey(mintStr);
         const programId = await this.getMintProgramId(mintPubkey);
         const serverATA = await getOrCreateAssociatedTokenAccount(
@@ -955,15 +1008,32 @@ class SolanaService {
           undefined,
           programId
         );
-        const baseBalance = await this.connection.getTokenAccountBalance(serverATA.address);
-        const baseAmount = BigInt(baseBalance.value.amount);
+        
+        let baseAmount = BigInt(0);
+        try {
+          const baseBalance = await this.connection.getTokenAccountBalance(serverATA.address);
+          baseAmount = BigInt(baseBalance.value.amount);
+        } catch (ataErr) {
+          baseAmount = BigInt(0);
+        }
+
+        // If mint is wSOL and base balance is insufficient, automatically wrap SOL
+        if (isWsol && baseAmount < BigInt(depositAmount)) {
+          const wsolShortfall = BigInt(depositAmount) - baseAmount;
+          console.log(`Wrapping ${Number(wsolShortfall) / 1e9} SOL to wSOL for server wallet to cover deposit...`);
+          await this.wrapSol(Number(wsolShortfall));
+          // Refresh base balance
+          const baseBalance = await this.connection.getTokenAccountBalance(serverATA.address);
+          baseAmount = BigInt(baseBalance.value.amount);
+        }
 
         if (baseAmount < BigInt(depositAmount)) {
+          const tokenName = isWsol ? 'wSOL' : 'USDC';
           throw new Error(
-            `Insufficient USDC balance for deposit. ` +
-            `Base chain balance: ${baseBalance.value.uiAmountString} USDC, ` +
-            `needed to deposit: ${depositAmount / Math.pow(10, decimals)} USDC. ` +
-            `Please fund the server wallet (${this.serverWallet.publicKey.toBase58()}) with more USDC.`
+            `Insufficient ${tokenName} balance for deposit. ` +
+            `Base chain balance: ${Number(baseAmount) / Math.pow(10, decimals)} ${tokenName}, ` +
+            `needed to deposit: ${depositAmount / Math.pow(10, decimals)} ${tokenName}. ` +
+            `Please fund the server wallet (${this.serverWallet.publicKey.toBase58()}) with more ${isWsol ? 'SOL' : 'USDC'}.`
           );
         }
 
@@ -984,7 +1054,7 @@ class SolanaService {
         fromBalance: "ephemeral",
         toBalance: "base",
         cluster: this.network,
-        wrapAndUnwrapSol: false,
+        wrapAndUnwrapSol: isWsol,
         initIfMissing: false,
         initAtasIfMissing: true,
         initVaultIfMissing: false
@@ -1105,6 +1175,7 @@ class SolanaService {
       }
 
       const mintStr = tokenMintAddress || USDC_DEVNET_MINT;
+      const isWsol = mintStr === 'So11111111111111111111111111111111111111112';
 
       // Ensure the mint is initialized before transfer
       await this.initializeMintIfNeeded(mintStr);
@@ -1116,21 +1187,83 @@ class SolanaService {
         throw new Error(`Transfer amount must be positive. Got: ${amount}`);
       }
 
-      // Check & top-up server's ephemeral balance
-      let ephemeralBalance;
-      try {
-        ephemeralBalance = await this.getMagicblockPrivateBalance(mintStr);
-      } catch (balanceErr) {
-        ephemeralBalance = null;
-      }
+      // Check & top-up server's balance based on token type
+      if (isWsol) {
+        // For wSOL (SOL), ensure server has enough base (on-chain) wSOL
+        const mintPubkey = new PublicKey(mintStr);
+        const programId = await this.getMintProgramId(mintPubkey);
+        const serverATA = await getOrCreateAssociatedTokenAccount(
+          this.connection,
+          this.serverWallet,
+          mintPubkey,
+          this.serverWallet.publicKey,
+          true,
+          'confirmed',
+          undefined,
+          programId
+        );
 
-      if (ephemeralBalance !== null && ephemeralBalance < rawAmount) {
-        const shortfall = rawAmount - ephemeralBalance;
-        const depositAmount = Math.max(shortfall, MIN_DEPOSIT_AMOUNT);
+        let baseAmount = BigInt(0);
+        try {
+          const baseBalance = await this.connection.getTokenAccountBalance(serverATA.address);
+          baseAmount = BigInt(baseBalance.value.amount);
+        } catch (ataErr) {
+          baseAmount = BigInt(0);
+        }
 
-        console.log(`📉 Ephemeral balance (${ephemeralBalance}) < required (${rawAmount}). Depositing ${depositAmount} base units...`);
-        await this.depositToMagicblockPER(depositAmount, mintStr);
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        if (baseAmount < BigInt(rawAmount)) {
+          const wsolShortfall = BigInt(rawAmount) - baseAmount;
+          console.log(`Wrapping ${Number(wsolShortfall) / 1e9} SOL to wSOL for server wallet to cover transfer...`);
+          await this.wrapSol(Number(wsolShortfall));
+        }
+      } else {
+        // For USDC, check & top-up server's ephemeral balance
+        let ephemeralBalance;
+        try {
+          ephemeralBalance = await this.getMagicblockPrivateBalance(mintStr);
+        } catch (balanceErr) {
+          ephemeralBalance = null;
+        }
+
+        if (ephemeralBalance !== null && ephemeralBalance < rawAmount) {
+          const shortfall = rawAmount - ephemeralBalance;
+          const depositAmount = Math.max(shortfall, MIN_DEPOSIT_AMOUNT);
+
+          console.log(`📉 Ephemeral balance (${ephemeralBalance}) < required (${rawAmount}). Depositing ${depositAmount} base units...`);
+
+          const mintPubkey = new PublicKey(mintStr);
+          const programId = await this.getMintProgramId(mintPubkey);
+          const serverATA = await getOrCreateAssociatedTokenAccount(
+            this.connection,
+            this.serverWallet,
+            mintPubkey,
+            this.serverWallet.publicKey,
+            true,
+            'confirmed',
+            undefined,
+            programId
+          );
+
+          let baseAmount = BigInt(0);
+          try {
+            const baseBalance = await this.connection.getTokenAccountBalance(serverATA.address);
+            baseAmount = BigInt(baseBalance.value.amount);
+          } catch (ataErr) {
+            baseAmount = BigInt(0);
+          }
+
+          if (baseAmount < BigInt(depositAmount)) {
+            throw new Error(
+              `Insufficient USDC balance for deposit. ` +
+              `Base chain balance: ${Number(baseAmount) / 1e6} USDC, ` +
+              `needed to deposit: ${depositAmount / 1e6} USDC. ` +
+              `Please fund the server wallet (${this.serverWallet.publicKey.toBase58()}) with more USDC.`
+            );
+          }
+
+          await this.depositToMagicblockPER(depositAmount, mintStr);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
       }
 
       // Request the transfer transaction from Magicblock
@@ -1139,17 +1272,17 @@ class SolanaService {
         to: recipientAddress,
         mint: mintStr,
         amount: rawAmount,
-        visibility: "private",
-        fromBalance: "ephemeral",
+        visibility: isWsol ? "public" : "private", // Public transfer for SOL to allow custom unwrap instruction
+        fromBalance: isWsol ? "base" : "ephemeral",
         toBalance: "base", // Settle directly to user's base wallet
         cluster: this.network,
-        wrapAndUnwrapSol: false,
+        wrapAndUnwrapSol: false, // We will manually unwrap SOL
         initIfMissing: false,
         initAtasIfMissing: true,
         initVaultIfMissing: false
       };
 
-      console.log(`📤 Requesting Magicblock private transfer setup...`);
+      console.log(`📤 Requesting Magicblock transfer setup (wSOL=${isWsol})...`);
       const response = await axios.post(`${MAGICBLOCK_API_URL}/v1/spl/transfer`, payload);
 
       if (!response.data || !response.data.transactionBase64) {
@@ -1159,22 +1292,40 @@ class SolanaService {
       const transactionBuffer = Buffer.from(response.data.transactionBase64, 'base64');
       let signedTxBase64;
 
-      // Partially sign the transaction as the sender (server wallet)
-      if (response.data.version === 'v0') {
-        const versionedTransaction = VersionedTransaction.deserialize(transactionBuffer);
-        versionedTransaction.sign([this.serverWallet]);
-        signedTxBase64 = Buffer.from(versionedTransaction.serialize()).toString('base64');
-      } else {
+      if (isWsol) {
+        // For wSOL (SOL), deserialize and append the CloseAccount instruction so it unwraps to SOL instantly
         const transaction = Transaction.from(transactionBuffer);
+        const recipientPubkey = new PublicKey(recipientAddress);
+        const recipientWsolAta = await getAssociatedTokenAddress(new PublicKey(WSOL_DEVNET_MINT), recipientPubkey);
+        
+        transaction.add(
+          createCloseAccountInstruction(
+            recipientWsolAta,
+            recipientPubkey, // Destination for the unwrapped SOL
+            recipientPubkey // Owner authority (recipient)
+          )
+        );
+
         transaction.partialSign(this.serverWallet);
         signedTxBase64 = transaction.serialize({ requireAllSignatures: false }).toString('base64');
+      } else {
+        // For USDC, partially sign as usual
+        if (response.data.version === 'v0') {
+          const versionedTransaction = VersionedTransaction.deserialize(transactionBuffer);
+          versionedTransaction.sign([this.serverWallet]);
+          signedTxBase64 = Buffer.from(versionedTransaction.serialize()).toString('base64');
+        } else {
+          const transaction = Transaction.from(transactionBuffer);
+          transaction.partialSign(this.serverWallet);
+          signedTxBase64 = transaction.serialize({ requireAllSignatures: false }).toString('base64');
+        }
       }
 
       return {
         transaction: signedTxBase64,
-        version: response.data.version,
-        sendRpcEndpoint: response.data.sendRpcEndpoint || 'https://devnet.magicblock.app',
-        requiredSigners: response.data.requiredSigners,
+        version: isWsol ? 'legacy' : response.data.version, // Use legacy for wSOL to support custom instructions
+        sendRpcEndpoint: isWsol ? undefined : (response.data.sendRpcEndpoint || 'https://devnet.magicblock.app'),
+        requiredSigners: isWsol ? [this.serverWallet.publicKey.toBase58(), recipientAddress] : response.data.requiredSigners,
         amount: amount,
         recipient: recipientAddress
       };
