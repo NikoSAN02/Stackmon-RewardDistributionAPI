@@ -263,8 +263,7 @@ async function refreshUserStats() {
   try {
     log('Refreshing user balances...', 'info');
     userSol.innerText = 'Loading...';
-    userUsdcBase.innerText = 'Loading...';
-    
+
     // 1. Fetch SOL Balance
     const solLamports = await connection.getBalance(userWallet);
     userSol.innerText = (solLamports / solanaWeb3.LAMPORTS_PER_SOL).toFixed(4);
@@ -424,43 +423,46 @@ btnDeposit.addEventListener('click', async () => {
     
     const resData = await res.json();
     log('Deposit transaction built. Prompting signature...', 'info');
-    
+
+    // Use the RPC endpoint the API tells us to broadcast to
+    const sendRpc = resData.sendRpcEndpoint || SOLANA_DEVNET_RPC;
+    const broadcastConn = new solanaWeb3.Connection(sendRpc, 'confirmed');
+
     // Deserialize transaction
     const txBuffer = Uint8Array.from(window.atob(resData.transactionBase64), c => c.charCodeAt(0));
     let signature;
-    
+
     if (resData.version === 'v0') {
       const tx = solanaWeb3.VersionedTransaction.deserialize(txBuffer);
       const signedTx = await window.solana.signTransaction(tx);
-      log('Transaction signed. Broadcasting to Devnet...', 'info');
-      signature = await connection.sendTransaction(signedTx, { skipPreflight: true });
+      log(`Transaction signed. Broadcasting to ${sendRpc}...`, 'info');
+      signature = await broadcastConn.sendTransaction(signedTx, { skipPreflight: true });
     } else {
       const tx = solanaWeb3.Transaction.from(txBuffer);
       const signedTx = await window.solana.signTransaction(tx);
-      log('Transaction signed. Broadcasting to Devnet...', 'info');
-      signature = await connection.sendRawTransaction(signedTx.serialize(), { skipPreflight: true });
+      log(`Transaction signed. Broadcasting to ${sendRpc}...`, 'info');
+      signature = await broadcastConn.sendRawTransaction(signedTx.serialize(), { skipPreflight: true });
     }
-    
+
     log(`Transaction broadcasted. Signature: ${signature}`, 'info', signature);
     log('Confirming transaction...', 'info');
-    
-    const latestBlock = await connection.getLatestBlockhash();
-    await connection.confirmTransaction({
+
+    const latestBlock = await broadcastConn.getLatestBlockhash();
+    await broadcastConn.confirmTransaction({
       blockhash: latestBlock.blockhash,
       lastValidBlockHeight: latestBlock.lastValidBlockHeight,
-      signature: signature
+      signature
     });
-    
+
     log('SOL deposit (Shielding) confirmed successfully!', 'success');
-    
-    // Wait brief moment and refresh balances
+
     setTimeout(async () => {
       await refreshUserStats();
       await refreshServerStats();
     }, 2000);
-    
+
   } catch (err) {
-    log(`Deposit failed: ${err.message}`, 'error');
+    log(`Deposit failed: ${err.message || err}`, 'error');
   }
 });
 
@@ -509,43 +511,46 @@ btnWithdraw.addEventListener('click', async () => {
     
     const resData = await res.json();
     log('Withdrawal transaction built. Prompting signature...', 'info');
-    
+
+    // Use the RPC endpoint the API tells us to broadcast to
+    const sendRpc = resData.sendRpcEndpoint || SOLANA_DEVNET_RPC;
+    const broadcastConn = new solanaWeb3.Connection(sendRpc, 'confirmed');
+
     // Deserialize transaction
     const txBuffer = Uint8Array.from(window.atob(resData.transactionBase64), c => c.charCodeAt(0));
     let signature;
-    
+
     if (resData.version === 'v0') {
       const tx = solanaWeb3.VersionedTransaction.deserialize(txBuffer);
       const signedTx = await window.solana.signTransaction(tx);
-      log('Transaction signed. Broadcasting to Devnet...', 'info');
-      signature = await connection.sendTransaction(signedTx, { skipPreflight: true });
+      log(`Transaction signed. Broadcasting to ${sendRpc}...`, 'info');
+      signature = await broadcastConn.sendTransaction(signedTx, { skipPreflight: true });
     } else {
       const tx = solanaWeb3.Transaction.from(txBuffer);
       const signedTx = await window.solana.signTransaction(tx);
-      log('Transaction signed. Broadcasting to Devnet...', 'info');
-      signature = await connection.sendRawTransaction(signedTx.serialize(), { skipPreflight: true });
+      log(`Transaction signed. Broadcasting to ${sendRpc}...`, 'info');
+      signature = await broadcastConn.sendRawTransaction(signedTx.serialize(), { skipPreflight: true });
     }
-    
+
     log(`Transaction broadcasted. Signature: ${signature}`, 'info', signature);
     log('Confirming transaction...', 'info');
-    
-    const latestBlock = await connection.getLatestBlockhash();
-    await connection.confirmTransaction({
+
+    const latestBlock = await broadcastConn.getLatestBlockhash();
+    await broadcastConn.confirmTransaction({
       blockhash: latestBlock.blockhash,
       lastValidBlockHeight: latestBlock.lastValidBlockHeight,
-      signature: signature
+      signature
     });
-    
+
     log('SOL withdrawal (Unshielding) confirmed successfully!', 'success');
-    
-    // Wait brief moment and refresh balances
+
     setTimeout(async () => {
       await refreshUserStats();
       await refreshServerStats();
     }, 2000);
-    
+
   } catch (err) {
-    log(`Withdrawal failed: ${err.message}`, 'error');
+    log(`Withdrawal failed: ${err.message || err}`, 'error');
   }
 });
 // Direct Bet SOL from User Base → Server PER (private transfer with wrapAndUnwrapSol: true)
