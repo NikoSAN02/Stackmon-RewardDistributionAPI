@@ -393,83 +393,82 @@ btnPerLogin.addEventListener('click', async () => {
   }
 });
 
-// Shield (Deposit) SOL into PER (using transfer self-call with wrapAndUnwrapSol: true)
+// Shield (Deposit) SOL into PER — wraps SOL to WSOL, then deposits via /v1/spl/deposit
 btnDeposit.addEventListener('click', async () => {
   if (!userWallet) return;
-  
+
   const uiAmount = parseFloat(inputDepositAmount.value);
   if (isNaN(uiAmount) || uiAmount <= 0) {
     alert('Please enter a valid deposit amount.');
     return;
   }
-  
+
   const baseUnits = Math.round(uiAmount * 1_000_000_000);
-  
+
   try {
-    log(`Requesting deposit transaction from Magicblock API for ${uiAmount} SOL (${baseUnits} base units)...`, 'info');
-    
+    log(`Requesting deposit transaction from Magicblock API for ${uiAmount} SOL (${baseUnits} lamports)...`, 'info');
+
+    // Use the dedicated /deposit endpoint — takes an 'owner' field, NOT from/to
     const payload = {
-      from: userWallet.toBase58(),
-      to: userWallet.toBase58(),
+      owner: userWallet.toBase58(),
       mint: WSOL_DEVNET_MINT,
       amount: baseUnits,
-      fromBalance: 'base',
-      toBalance: 'ephemeral',
-      visibility: 'private',
-      wrapAndUnwrapSol: true,
       cluster: 'devnet',
       initIfMissing: true,
       initAtasIfMissing: true,
-      initVaultIfMissing: true
+      initVaultIfMissing: true,
+      idempotent: true
     };
-    
-    const res = await fetch(`${MAGICBLOCK_API_URL}/v1/spl/transfer`, {
+
+    const res = await fetch(`${MAGICBLOCK_API_URL}/v1/spl/deposit`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    
+
     if (!res.ok) {
-      const errData = await res.json();
-      throw new Error(errData.error?.message || `HTTP ${res.status}`);
+      const errText = await res.text();
+      let errMsg;
+      try { errMsg = JSON.parse(errText).error?.message; } catch { errMsg = errText; }
+      throw new Error(errMsg || `HTTP ${res.status}`);
     }
-    
+
     const resData = await res.json();
-    log('Deposit transaction built. Prompting signature...', 'info');
+    log(`Deposit tx built (sendTo: ${resData.sendTo}). Prompting signature...`, 'info');
+    log(`[DEBUG] API response: version=${resData.version}, sendTo=${resData.sendTo}`, 'system');
 
-    // Use the RPC endpoint the API tells us to broadcast to
-    const sendRpc = resData.sendRpcEndpoint || SOLANA_DEVNET_RPC;
-    const broadcastConn = new solanaWeb3.Connection(sendRpc, 'confirmed');
+    // Route to correct RPC: sendTo=="base" → standard Solana devnet
+    const broadcastRpc = resData.sendTo === 'ephemeral'
+      ? 'https://devnet.magicblock.app'
+      : SOLANA_DEVNET_RPC;
+    const broadcastConn = new solanaWeb3.Connection(broadcastRpc, 'confirmed');
+    log(`Broadcasting to: ${broadcastRpc}`, 'system');
 
-    // Deserialize transaction
+    // Deserialize and sign
     const txBuffer = Uint8Array.from(window.atob(resData.transactionBase64), c => c.charCodeAt(0));
     let signature;
 
     if (resData.version === 'v0') {
       const tx = solanaWeb3.VersionedTransaction.deserialize(txBuffer);
       const signedTx = await window.solana.signTransaction(tx);
-      log(`Transaction signed. Broadcasting to ${sendRpc}...`, 'info');
-      signature = await broadcastConn.sendTransaction(signedTx, { skipPreflight: true });
+      log('Transaction signed. Broadcasting...', 'info');
+      signature = await broadcastConn.sendTransaction(signedTx, { skipPreflight: false });
     } else {
       const tx = solanaWeb3.Transaction.from(txBuffer);
       const signedTx = await window.solana.signTransaction(tx);
-      log(`Transaction signed. Broadcasting to ${sendRpc}...`, 'info');
-      signature = await broadcastConn.sendRawTransaction(signedTx.serialize(), { skipPreflight: true });
+      log('Transaction signed. Broadcasting...', 'info');
+      signature = await broadcastConn.sendRawTransaction(signedTx.serialize(), { skipPreflight: false });
     }
 
     log(`Transaction broadcasted. Signature: ${signature}`, 'info', signature);
     log('Confirming transaction...', 'info');
 
-    const latestBlock = await broadcastConn.getLatestBlockhash();
-    await broadcastConn.confirmTransaction({
-      blockhash: latestBlock.blockhash,
-      lastValidBlockHeight: latestBlock.lastValidBlockHeight,
-      signature
-    });
+    // Confirm using the blockhash from the API response (more reliable)
+    const blockhash = resData.recentBlockhash || (await broadcastConn.getLatestBlockhash()).blockhash;
+    const lastValidBlockHeight = resData.lastValidBlockHeight || (await broadcastConn.getLatestBlockhash()).lastValidBlockHeight;
+    await broadcastConn.confirmTransaction({ blockhash, lastValidBlockHeight, signature });
 
-    log('SOL deposit (Shielding) confirmed successfully!', 'success');
+    log('✅ SOL deposit (Shielding) confirmed! SOL was wrapped to WSOL and moved into PER.', 'success');
 
     setTimeout(async () => {
       await refreshUserStats();
@@ -477,87 +476,93 @@ btnDeposit.addEventListener('click', async () => {
     }, 2000);
 
   } catch (err) {
-    log(`Deposit failed: ${err.message || err}`, 'error');
+    log(`Deposit failed: ${err.message || JSON.stringify(err)}`, 'error');
+    console.error('Deposit error:', err);
   }
 });
 
-// Unshield (Withdraw) SOL from PER (using transfer self-call with wrapAndUnwrapSol: true)
+// Unshield (Withdraw) SOL from PER — withdraws via /v1/spl/withdraw, WSOL is auto-unwrapped
 btnWithdraw.addEventListener('click', async () => {
   if (!userWallet) return;
-  
+
+  if (!userToken || Date.now() >= userTokenExpiry) {
+    log('PER login required before withdrawing. Please authenticate first.', 'error');
+    return;
+  }
+
   const uiAmount = parseFloat(inputWithdrawAmount.value);
   if (isNaN(uiAmount) || uiAmount <= 0) {
     alert('Please enter a valid withdrawal amount.');
     return;
   }
-  
+
   const baseUnits = Math.round(uiAmount * 1_000_000_000);
-  
+
   try {
-    log(`Requesting withdrawal transaction for ${uiAmount} SOL (${baseUnits} base units)...`, 'info');
-    
+    log(`Requesting withdrawal transaction for ${uiAmount} SOL (${baseUnits} lamports)...`, 'info');
+
+    // Use the dedicated /withdraw endpoint — takes an 'owner' field, NOT from/to
     const payload = {
-      from: userWallet.toBase58(),
-      to: userWallet.toBase58(),
+      owner: userWallet.toBase58(),
       mint: WSOL_DEVNET_MINT,
       amount: baseUnits,
-      fromBalance: 'ephemeral',
-      toBalance: 'base',
-      visibility: 'private',
-      wrapAndUnwrapSol: true,
       cluster: 'devnet',
       initIfMissing: true,
       initAtasIfMissing: true,
-      initVaultIfMissing: true
+      idempotent: true
     };
-    
-    const res = await fetch(`${MAGICBLOCK_API_URL}/v1/spl/transfer`, {
+
+    const res = await fetch(`${MAGICBLOCK_API_URL}/v1/spl/withdraw`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${userToken}`
       },
       body: JSON.stringify(payload)
     });
-    
+
     if (!res.ok) {
-      const errData = await res.json();
-      throw new Error(errData.error?.message || `HTTP ${res.status}`);
+      const errText = await res.text();
+      let errMsg;
+      try { errMsg = JSON.parse(errText).error?.message; } catch { errMsg = errText; }
+      throw new Error(errMsg || `HTTP ${res.status}`);
     }
-    
+
     const resData = await res.json();
-    log('Withdrawal transaction built. Prompting signature...', 'info');
+    log(`Withdrawal tx built (sendTo: ${resData.sendTo}). Prompting signature...`, 'info');
+    log(`[DEBUG] API response: version=${resData.version}, sendTo=${resData.sendTo}`, 'system');
 
-    // Use the RPC endpoint the API tells us to broadcast to
-    const sendRpc = resData.sendRpcEndpoint || SOLANA_DEVNET_RPC;
-    const broadcastConn = new solanaWeb3.Connection(sendRpc, 'confirmed');
+    // Route to correct RPC: sendTo=="base" → standard Solana devnet
+    const broadcastRpc = resData.sendTo === 'ephemeral'
+      ? 'https://devnet.magicblock.app'
+      : SOLANA_DEVNET_RPC;
+    const broadcastConn = new solanaWeb3.Connection(broadcastRpc, 'confirmed');
+    log(`Broadcasting to: ${broadcastRpc}`, 'system');
 
-    // Deserialize transaction
+    // Deserialize and sign
     const txBuffer = Uint8Array.from(window.atob(resData.transactionBase64), c => c.charCodeAt(0));
     let signature;
 
     if (resData.version === 'v0') {
       const tx = solanaWeb3.VersionedTransaction.deserialize(txBuffer);
       const signedTx = await window.solana.signTransaction(tx);
-      log(`Transaction signed. Broadcasting to ${sendRpc}...`, 'info');
-      signature = await broadcastConn.sendTransaction(signedTx, { skipPreflight: true });
+      log('Transaction signed. Broadcasting...', 'info');
+      signature = await broadcastConn.sendTransaction(signedTx, { skipPreflight: false });
     } else {
       const tx = solanaWeb3.Transaction.from(txBuffer);
       const signedTx = await window.solana.signTransaction(tx);
-      log(`Transaction signed. Broadcasting to ${sendRpc}...`, 'info');
-      signature = await broadcastConn.sendRawTransaction(signedTx.serialize(), { skipPreflight: true });
+      log('Transaction signed. Broadcasting...', 'info');
+      signature = await broadcastConn.sendRawTransaction(signedTx.serialize(), { skipPreflight: false });
     }
 
     log(`Transaction broadcasted. Signature: ${signature}`, 'info', signature);
     log('Confirming transaction...', 'info');
 
-    const latestBlock = await broadcastConn.getLatestBlockhash();
-    await broadcastConn.confirmTransaction({
-      blockhash: latestBlock.blockhash,
-      lastValidBlockHeight: latestBlock.lastValidBlockHeight,
-      signature
-    });
+    const blockhash = resData.recentBlockhash || (await broadcastConn.getLatestBlockhash()).blockhash;
+    const lastValidBlockHeight = resData.lastValidBlockHeight || (await broadcastConn.getLatestBlockhash()).lastValidBlockHeight;
+    await broadcastConn.confirmTransaction({ blockhash, lastValidBlockHeight, signature });
 
-    log('SOL withdrawal (Unshielding) confirmed successfully!', 'success');
+    log('✅ SOL withdrawal (Unshielding) confirmed! WSOL was unwrapped to SOL in your base wallet.', 'success');
 
     setTimeout(async () => {
       await refreshUserStats();
@@ -565,7 +570,8 @@ btnWithdraw.addEventListener('click', async () => {
     }, 2000);
 
   } catch (err) {
-    log(`Withdrawal failed: ${err.message || err}`, 'error');
+    log(`Withdrawal failed: ${err.message || JSON.stringify(err)}`, 'error');
+    console.error('Withdrawal error:', err);
   }
 });
 // Direct Bet SOL from User Base → Server PER (private transfer with wrapAndUnwrapSol: true)
