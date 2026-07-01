@@ -438,7 +438,8 @@ btnDeposit.addEventListener('click', async () => {
       cluster: 'devnet',
       initIfMissing: true,
       initAtasIfMissing: true,
-      initVaultIfMissing: true
+      initVaultIfMissing: true,
+      legacy: true // Force legacy transaction format so we can modify the instructions array
     };
 
     const res = await fetch(`${MAGICBLOCK_API_URL}/v1/spl/transfer`, {
@@ -455,7 +456,46 @@ btnDeposit.addEventListener('click', async () => {
     }
 
     const resData = await res.json();
-    log(`Deposit transaction built (sendTo: ${resData.sendTo || 'base'}). Prompting signature...`, 'info');
+    log(`Deposit transaction built. Prepending manual SOL wrap instructions...`, 'info');
+
+    // Deserialize legacy transaction
+    const txBuffer = Uint8Array.from(window.atob(resData.transactionBase64), c => c.charCodeAt(0));
+    const tx = solanaWeb3.Transaction.from(txBuffer);
+
+    // ── Prepend Manual SOL Wrapping Instructions ────────────────────────
+    const mintPubkey = new solanaWeb3.PublicKey(WSOL_DEVNET_MINT);
+    const userATA = getAssociatedTokenAddress(userWallet, mintPubkey);
+
+    // 1. Idempotent Create ATA Instruction
+    const createATAIx = new solanaWeb3.TransactionInstruction({
+      keys: [
+        { pubkey: userWallet,                                isSigner: true,  isWritable: true  },
+        { pubkey: userATA,                                   isSigner: false, isWritable: true  },
+        { pubkey: userWallet,                                isSigner: false, isWritable: false },
+        { pubkey: mintPubkey,                                isSigner: false, isWritable: false },
+        { pubkey: solanaWeb3.SystemProgram.programId,        isSigner: false, isWritable: false },
+        { pubkey: TOKEN_PROGRAM_ID,                          isSigner: false, isWritable: false },
+      ],
+      programId: ASSOCIATED_TOKEN_PROGRAM_ID,
+      data: new Uint8Array([1]), // 1 = CreateIdempotent
+    });
+
+    // 2. System transfer native SOL to ATA
+    const transferSOLIx = solanaWeb3.SystemProgram.transfer({
+      fromPubkey: userWallet,
+      toPubkey: userATA,
+      lamports: baseUnits,
+    });
+
+    // 3. SyncNative to wrap the SOL
+    const syncNativeIx = new solanaWeb3.TransactionInstruction({
+      keys: [{ pubkey: userATA, isSigner: false, isWritable: true }],
+      programId: TOKEN_PROGRAM_ID,
+      data: new Uint8Array([17]), // SyncNative
+    });
+
+    // Prepend instructions so they execute before the Magicblock deposit transfer
+    tx.instructions.unshift(createATAIx, transferSOLIx, syncNativeIx);
 
     // Route to correct RPC endpoint
     const broadcastRpc = resData.sendRpcEndpoint || 
@@ -463,27 +503,19 @@ btnDeposit.addEventListener('click', async () => {
     const broadcastConn = new solanaWeb3.Connection(broadcastRpc, 'confirmed');
     log(`Broadcasting to: ${broadcastRpc}`, 'system');
 
-    // Deserialize transaction
-    const txBuffer = Uint8Array.from(window.atob(resData.transactionBase64), c => c.charCodeAt(0));
-    let signature;
+    // Get blockhash and set fee payer
+    const { blockhash, lastValidBlockHeight } = await broadcastConn.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = userWallet;
 
-    if (resData.version === 'v0') {
-      const tx = solanaWeb3.VersionedTransaction.deserialize(txBuffer);
-      const signedTx = await window.solana.signTransaction(tx);
-      log('Transaction signed. Broadcasting...', 'info');
-      signature = await broadcastConn.sendRawTransaction(signedTx.serialize(), { skipPreflight: false });
-    } else {
-      const tx = solanaWeb3.Transaction.from(txBuffer);
-      const signedTx = await window.solana.signTransaction(tx);
-      log('Transaction signed. Broadcasting...', 'info');
-      signature = await broadcastConn.sendRawTransaction(signedTx.serialize(), { skipPreflight: false });
-    }
+    log('Prompting signature...', 'info');
+    const signedTx = await window.solana.signTransaction(tx);
+    log('Transaction signed. Broadcasting...', 'info');
+    const signature = await broadcastConn.sendRawTransaction(signedTx.serialize(), { skipPreflight: false });
 
     log(`Transaction broadcasted. Signature: ${signature}`, 'info', signature);
     log('Confirming transaction...', 'info');
 
-    const blockhash = resData.recentBlockhash || (await broadcastConn.getLatestBlockhash()).blockhash;
-    const lastValidBlockHeight = resData.lastValidBlockHeight || (await broadcastConn.getLatestBlockhash()).lastValidBlockHeight;
     await broadcastConn.confirmTransaction({ blockhash, lastValidBlockHeight, signature });
 
     log('✅ SOL deposit (Shielding) confirmed successfully!', 'success');
@@ -532,7 +564,8 @@ btnWithdraw.addEventListener('click', async () => {
       cluster: 'devnet',
       initIfMissing: true,
       initAtasIfMissing: true,
-      initVaultIfMissing: true
+      initVaultIfMissing: true,
+      legacy: true // Force legacy format so we can modify the instructions array
     };
 
     const res = await fetch(`${MAGICBLOCK_API_URL}/v1/spl/transfer`, {
@@ -552,7 +585,28 @@ btnWithdraw.addEventListener('click', async () => {
     }
 
     const resData = await res.json();
-    log(`Withdrawal transaction built (sendTo: ${resData.sendTo || 'base'}). Prompting signature...`, 'info');
+    log(`Withdrawal transaction built. Appending close ATA instruction to unwrap SOL...`, 'info');
+
+    // Deserialize legacy transaction
+    const txBuffer = Uint8Array.from(window.atob(resData.transactionBase64), c => c.charCodeAt(0));
+    const tx = solanaWeb3.Transaction.from(txBuffer);
+
+    // ── Append Close Account instruction to unwrap WSOL back to native SOL ────
+    const mintPubkey = new solanaWeb3.PublicKey(WSOL_DEVNET_MINT);
+    const userATA = getAssociatedTokenAddress(userWallet, mintPubkey);
+
+    const closeATAIx = new solanaWeb3.TransactionInstruction({
+      keys: [
+        { pubkey: userATA,    isSigner: false, isWritable: true  },
+        { pubkey: userWallet, isSigner: false, isWritable: true  },
+        { pubkey: userWallet, isSigner: true,  isWritable: false },
+      ],
+      programId: TOKEN_PROGRAM_ID,
+      data: new Uint8Array([9]), // 9 = CloseAccount
+    });
+
+    // Append close instruction so it executes after the Magicblock withdraw transfer
+    tx.instructions.push(closeATAIx);
 
     // Route to correct RPC endpoint
     const broadcastRpc = resData.sendRpcEndpoint || 
@@ -560,27 +614,19 @@ btnWithdraw.addEventListener('click', async () => {
     const broadcastConn = new solanaWeb3.Connection(broadcastRpc, 'confirmed');
     log(`Broadcasting to: ${broadcastRpc}`, 'system');
 
-    // Deserialize transaction
-    const txBuffer = Uint8Array.from(window.atob(resData.transactionBase64), c => c.charCodeAt(0));
-    let signature;
+    // Get blockhash and set fee payer
+    const { blockhash, lastValidBlockHeight } = await broadcastConn.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = userWallet;
 
-    if (resData.version === 'v0') {
-      const tx = solanaWeb3.VersionedTransaction.deserialize(txBuffer);
-      const signedTx = await window.solana.signTransaction(tx);
-      log('Transaction signed. Broadcasting...', 'info');
-      signature = await broadcastConn.sendRawTransaction(signedTx.serialize(), { skipPreflight: false });
-    } else {
-      const tx = solanaWeb3.Transaction.from(txBuffer);
-      const signedTx = await window.solana.signTransaction(tx);
-      log('Transaction signed. Broadcasting...', 'info');
-      signature = await broadcastConn.sendRawTransaction(signedTx.serialize(), { skipPreflight: false });
-    }
+    log('Prompting signature...', 'info');
+    const signedTx = await window.solana.signTransaction(tx);
+    log('Transaction signed. Broadcasting...', 'info');
+    const signature = await broadcastConn.sendRawTransaction(signedTx.serialize(), { skipPreflight: false });
 
     log(`Transaction broadcasted. Signature: ${signature}`, 'info', signature);
     log('Confirming transaction...', 'info');
 
-    const blockhash = resData.recentBlockhash || (await broadcastConn.getLatestBlockhash()).blockhash;
-    const lastValidBlockHeight = resData.lastValidBlockHeight || (await broadcastConn.getLatestBlockhash()).lastValidBlockHeight;
     await broadcastConn.confirmTransaction({ blockhash, lastValidBlockHeight, signature });
 
     log('✅ SOL withdrawal (Unshielding) confirmed successfully!', 'success');
