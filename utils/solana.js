@@ -980,7 +980,213 @@ class SolanaService {
 
       console.log(`🔄 Preparing Magicblock private transfer: ${amount} (${rawAmount} base units) of mint ${mintStr} to ${recipientAddress}`);
 
-      // ── Step 1: Check & top-up server's ephemeral balance ──────────
+      if (isWsol) {
+        console.log('🛡️ Running private SOL transfer via Temp Wallet unwrap flow...');
+
+        // 1. Generate temp wallet
+        const tempWallet = Keypair.generate();
+        console.log(`Generated temp wallet: ${tempWallet.publicKey.toBase58()}`);
+
+        // 2. Fund temp wallet with 0.02 SOL
+        console.log('Funding temp wallet with 0.02 SOL for gas...');
+        const fundTx = new Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: this.serverWallet.publicKey,
+            toPubkey: tempWallet.publicKey,
+            lamports: 0.02 * 1e9
+          })
+        );
+        const fundSig = await this.connection.sendTransaction(fundTx, [this.serverWallet]);
+        const latestBlockForFund = await this.connection.getLatestBlockhash();
+        await this.connection.confirmTransaction({
+          blockhash: latestBlockForFund.blockhash,
+          lastValidBlockHeight: latestBlockForFund.lastValidBlockHeight,
+          signature: fundSig
+        });
+
+        // 3. Deposit wSOL for server if needed
+        const serverEata = await getAssociatedTokenAddress(new PublicKey(WSOL_DEVNET_MINT), this.serverWallet.publicKey);
+        const ephemeralRpc = new Connection('https://devnet.magicblock.app', 'confirmed');
+        
+        let serverEphemeralBalance = 0;
+        try {
+          const balRes = await ephemeralRpc.getTokenAccountBalance(serverEata);
+          serverEphemeralBalance = parseInt(balRes.value.amount, 10);
+        } catch (e) {
+          serverEphemeralBalance = 0;
+        }
+
+        if (serverEphemeralBalance < rawAmount) {
+          const shortfall = rawAmount - serverEphemeralBalance;
+          const depositAmount = Math.max(shortfall, MIN_DEPOSIT_AMOUNT);
+          
+          // Ensure we have wSOL to deposit
+          const mintPubkey = new PublicKey(mintStr);
+          const programId = await this.getMintProgramId(mintPubkey);
+          const serverATA = await getOrCreateAssociatedTokenAccount(
+            this.connection,
+            this.serverWallet,
+            mintPubkey,
+            this.serverWallet.publicKey,
+            true,
+            'confirmed',
+            undefined,
+            programId
+          );
+
+          let baseAmount = BigInt(0);
+          try {
+            const baseBalance = await this.connection.getTokenAccountBalance(serverATA.address);
+            baseAmount = BigInt(baseBalance.value.amount);
+          } catch (ataErr) {
+            baseAmount = BigInt(0);
+          }
+
+          if (baseAmount < BigInt(depositAmount)) {
+            const wsolShortfall = BigInt(depositAmount) - baseAmount;
+            console.log(`Wrapping ${Number(wsolShortfall) / 1e9} SOL to wSOL...`);
+            await this.wrapSol(Number(wsolShortfall));
+          }
+
+          // Deposit
+          await this.depositToMagicblockPER(depositAmount, mintStr);
+          
+          // Poll for balance update
+          for (let i = 0; i < 15; i++) {
+            try {
+              const balRes = await ephemeralRpc.getTokenAccountBalance(serverEata);
+              serverEphemeralBalance = parseInt(balRes.value.amount, 10);
+              if (serverEphemeralBalance >= rawAmount) break;
+            } catch (e) {}
+            await new Promise(r => setTimeout(r, 2000));
+          }
+        }
+
+        // 4. Perform private transfer of wSOL to temp wallet's ephemeral balance
+        console.log('Transferring wSOL privately to temp wallet...');
+        const token = await this.getMagicblockAuthToken();
+        const transferPayload = {
+          from: this.serverWallet.publicKey.toBase58(),
+          to: tempWallet.publicKey.toBase58(),
+          mint: WSOL_DEVNET_MINT,
+          amount: rawAmount,
+          visibility: "private",
+          fromBalance: "ephemeral",
+          toBalance: "ephemeral",
+          cluster: this.network,
+          initIfMissing: true,
+          initAtasIfMissing: true,
+          initVaultIfMissing: false
+        };
+
+        const transferRes = await axios.post(`${MAGICBLOCK_API_URL}/v1/spl/transfer`, transferPayload, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        const transferTxBuf = Buffer.from(transferRes.data.transactionBase64, 'base64');
+        const connToSend = transferRes.data.sendRpcEndpoint 
+          ? new Connection(transferRes.data.sendRpcEndpoint, 'confirmed')
+          : this.connection;
+
+        let transferSig;
+        if (transferRes.data.version === 'v0') {
+          const versionedTransaction = VersionedTransaction.deserialize(transferTxBuf);
+          versionedTransaction.sign([this.serverWallet]);
+          transferSig = await connToSend.sendTransaction(versionedTransaction, { skipPreflight: true });
+        } else {
+          const transaction = Transaction.from(transferTxBuf);
+          transaction.sign(this.serverWallet);
+          transferSig = await connToSend.sendRawTransaction(transaction.serialize(), { skipPreflight: true });
+        }
+
+        // Wait for temp wallet's ephemeral balance
+        const tempEata = await getAssociatedTokenAddress(new PublicKey(WSOL_DEVNET_MINT), tempWallet.publicKey);
+        let tempEphemeralBalance = 0;
+        for (let i = 0; i < 15; i++) {
+          try {
+            const balRes = await ephemeralRpc.getTokenAccountBalance(tempEata);
+            tempEphemeralBalance = parseInt(balRes.value.amount, 10);
+            if (tempEphemeralBalance >= rawAmount) break;
+          } catch (e) {}
+          await new Promise(r => setTimeout(r, 2000));
+        }
+
+        // 5. Withdraw from temp wallet to base
+        console.log('Withdrawing wSOL from temp wallet to base...');
+        const withdrawPayload = {
+          owner: tempWallet.publicKey.toBase58(),
+          mint: WSOL_DEVNET_MINT,
+          amount: rawAmount,
+          cluster: this.network,
+          initIfMissing: true,
+          initAtasIfMissing: true,
+          idempotent: true
+        };
+
+        const withdrawRes = await axios.post(`${MAGICBLOCK_API_URL}/v1/spl/withdraw`, withdrawPayload);
+        const withdrawTxBuf = Buffer.from(withdrawRes.data.transactionBase64, 'base64');
+
+        let withdrawSig;
+        if (withdrawRes.data.version === 'v0') {
+          const versionedTransaction = VersionedTransaction.deserialize(withdrawTxBuf);
+          versionedTransaction.sign([tempWallet]);
+          withdrawSig = await this.connection.sendTransaction(versionedTransaction, { skipPreflight: true });
+        } else {
+          const transaction = Transaction.from(withdrawTxBuf);
+          transaction.sign(tempWallet);
+          withdrawSig = await this.connection.sendRawTransaction(transaction.serialize(), { skipPreflight: true });
+        }
+        const latestBlockForWithdraw = await this.connection.getLatestBlockhash();
+        await this.connection.confirmTransaction({
+          blockhash: latestBlockForWithdraw.blockhash,
+          lastValidBlockHeight: latestBlockForWithdraw.lastValidBlockHeight,
+          signature: withdrawSig
+        });
+
+        // 6. Close temp wallet's wSOL ATA (unwrap)
+        console.log('Closing temp wallet wSOL ATA...');
+        const tempBaseWsolAta = await getAssociatedTokenAddress(new PublicKey(WSOL_DEVNET_MINT), tempWallet.publicKey);
+        const unwrapTx = new Transaction().add(
+          createCloseAccountInstruction(
+            tempBaseWsolAta,
+            tempWallet.publicKey,
+            tempWallet.publicKey
+          )
+        );
+        const unwrapSig = await this.connection.sendTransaction(unwrapTx, [tempWallet]);
+        const latestBlockForUnwrap = await this.connection.getLatestBlockhash();
+        await this.connection.confirmTransaction({
+          blockhash: latestBlockForUnwrap.blockhash,
+          lastValidBlockHeight: latestBlockForUnwrap.lastValidBlockHeight,
+          signature: unwrapSig
+        });
+
+        // 7. Transfer SOL to final recipient
+        console.log('Sending native SOL to recipient...');
+        const finalBal = await this.connection.getBalance(tempWallet.publicKey);
+        const transferAmount = finalBal - 1000000; // Leave buffer for transaction fee
+        
+        const finalRecipientPubkey = new PublicKey(recipientAddress);
+        const transferTx = new Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: tempWallet.publicKey,
+            toPubkey: finalRecipientPubkey,
+            lamports: transferAmount
+          })
+        );
+        const finalSig = await this.connection.sendTransaction(transferTx, [tempWallet]);
+        const latestBlockForFinal = await this.connection.getLatestBlockhash();
+        await this.connection.confirmTransaction({
+          blockhash: latestBlockForFinal.blockhash,
+          lastValidBlockHeight: latestBlockForFinal.lastValidBlockHeight,
+          signature: finalSig
+        });
+
+        console.log(`✅ Private SOL reward distributed successfully via Temp Wallet! Signature: ${finalSig}`);
+        return finalSig;
+      }
+
+      // ── Step 1: Check & top-up server's ephemeral balance (USDC) ──────────
       let ephemeralBalance;
       try {
         ephemeralBalance = await this.getMagicblockPrivateBalance(mintStr);
