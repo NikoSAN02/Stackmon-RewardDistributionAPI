@@ -27,6 +27,9 @@ const nacl = require('tweetnacl');
 // Devnet USDC Mint Address
 const USDC_DEVNET_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
 
+// Wrapped SOL Mint Address (same on devnet and mainnet)
+const WSOL_DEVNET_MINT = 'So11111111111111111111111111111111111111112';
+
 // Magicblock Private Payments API base URL
 const MAGICBLOCK_API_URL = 'https://payments.magicblock.app';
 
