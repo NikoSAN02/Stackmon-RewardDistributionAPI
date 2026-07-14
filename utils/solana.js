@@ -123,6 +123,36 @@ class SolanaService {
   }
 
   /**
+   * Get the Magicblock-specific cluster string identifier
+   * for routing to the private/TEE Ephemeral Rollup.
+   * @returns {string} Cluster string
+   */
+  getMagicblockCluster() {
+    if (this.network === 'devnet') {
+      return 'devnet-private';
+    }
+    if (this.network === 'mainnet-beta' || this.network === 'mainnet') {
+      return 'mainnet-private';
+    }
+    return this.network;
+  }
+
+  /**
+   * Get the Magicblock-specific Ephemeral RPC URL
+   * for querying balances/sending transactions to the private/TEE Ephemeral Rollup.
+   * @returns {string} RPC URL
+   */
+  getMagicblockEphemeralRpc() {
+    if (this.network === 'devnet') {
+      return 'https://devnet-tee.magicblock.app';
+    }
+    if (this.network === 'mainnet-beta' || this.network === 'mainnet') {
+      return 'https://mainnet-tee.magicblock.app';
+    }
+    return 'https://devnet-tee.magicblock.app';
+  }
+
+  /**
    * Get the server wallet keypair
    * @returns {Keypair} Server wallet keypair
    */
@@ -470,7 +500,7 @@ class SolanaService {
 
     // Step 1: Request a challenge
     const challengeRes = await axios.get(`${MAGICBLOCK_API_URL}/v1/spl/challenge`, {
-      params: { pubkey, cluster: this.network }
+      params: { pubkey, cluster: this.getMagicblockCluster() }
     });
 
     const challenge = challengeRes.data.challenge;
@@ -488,7 +518,7 @@ class SolanaService {
       pubkey,
       challenge,
       signature: signatureBase58,
-      cluster: this.network
+      cluster: this.getMagicblockCluster()
     });
 
     const token = loginRes.data.token;
@@ -518,7 +548,7 @@ class SolanaService {
     const token = await this.getMagicblockAuthToken();
 
     const res = await axios.get(`${MAGICBLOCK_API_URL}/v1/spl/private-balance`, {
-      params: { address: pubkey, mint, cluster: this.network },
+      params: { address: pubkey, mint, cluster: this.getMagicblockCluster() },
       headers: { Authorization: `Bearer ${token}` }
     });
 
@@ -545,7 +575,7 @@ class SolanaService {
       owner: this.serverWallet.publicKey.toBase58(),
       mint,
       amount,
-      cluster: this.network,
+      cluster: this.getMagicblockCluster(),
       initIfMissing: true,
       initVaultIfMissing: true,
       initAtasIfMissing: true,
@@ -707,7 +737,7 @@ class SolanaService {
       owner: this.serverWallet.publicKey.toBase58(),
       mint,
       amount,
-      cluster: this.network,
+      cluster: this.getMagicblockCluster(),
       initIfMissing: true,
       initAtasIfMissing: true,
       idempotent: true
@@ -894,7 +924,7 @@ class SolanaService {
     try {
       console.log(`Checking if mint ${mintStr} is initialized on Magicblock...`);
       const checkRes = await axios.get(`${MAGICBLOCK_API_URL}/v1/spl/is-mint-initialized`, {
-        params: { mint: mintStr, cluster: this.network }
+        params: { mint: mintStr, cluster: this.getMagicblockCluster() }
       });
 
       if (checkRes.data && checkRes.data.initialized) {
@@ -906,7 +936,7 @@ class SolanaService {
       const initPayload = {
         payer: this.serverWallet.publicKey.toBase58(),
         mint: mintStr,
-        cluster: this.network
+        cluster: this.getMagicblockCluster()
       };
 
       const response = await axios.post(`${MAGICBLOCK_API_URL}/v1/spl/initialize-mint`, initPayload);
@@ -988,7 +1018,7 @@ class SolanaService {
       // For USDC, use the private balance API
       let ephemeralBalance;
       if (isWsol) {
-        const ephemeralRpc = new Connection('https://devnet.magicblock.app', 'confirmed');
+        const ephemeralRpc = new Connection(this.getMagicblockEphemeralRpc(), 'confirmed');
         const serverEata = await getAssociatedTokenAddress(new PublicKey(WSOL_DEVNET_MINT), this.serverWallet.publicKey);
         try {
           const balRes = await ephemeralRpc.getTokenAccountBalance(serverEata);
@@ -1051,7 +1081,7 @@ class SolanaService {
 
         if (isWsol) {
           // Poll ephemeral RPC until balance is confirmed
-          const ephemeralRpc = new Connection('https://devnet.magicblock.app', 'confirmed');
+          const ephemeralRpc = new Connection(this.getMagicblockEphemeralRpc(), 'confirmed');
           const serverEata = await getAssociatedTokenAddress(new PublicKey(WSOL_DEVNET_MINT), this.serverWallet.publicKey);
           console.log('Polling ephemeral balance for wSOL...');
           for (let i = 0; i < 15; i++) {
@@ -1082,7 +1112,7 @@ class SolanaService {
         visibility: "private",
         fromBalance: "ephemeral",
         toBalance: "base",
-        cluster: this.network,
+        cluster: this.getMagicblockCluster(),
         wrapAndUnwrapSol: isWsol,
         initIfMissing: false,
         initAtasIfMissing: true,
