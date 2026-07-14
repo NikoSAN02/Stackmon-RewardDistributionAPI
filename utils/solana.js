@@ -1018,7 +1018,8 @@ class SolanaService {
       // For USDC, use the private balance API
       let ephemeralBalance;
       if (isWsol) {
-        const ephemeralRpc = new Connection(this.getMagicblockEphemeralRpc(), 'confirmed');
+        const authToken = await this.getMagicblockAuthToken();
+        const ephemeralRpc = new Connection(`${this.getMagicblockEphemeralRpc()}?token=${authToken}`, 'confirmed');
         const serverEata = await getAssociatedTokenAddress(new PublicKey(WSOL_DEVNET_MINT), this.serverWallet.publicKey);
         try {
           const balRes = await ephemeralRpc.getTokenAccountBalance(serverEata);
@@ -1081,7 +1082,8 @@ class SolanaService {
 
         if (isWsol) {
           // Poll ephemeral RPC until balance is confirmed
-          const ephemeralRpc = new Connection(this.getMagicblockEphemeralRpc(), 'confirmed');
+          const authToken = await this.getMagicblockAuthToken();
+          const ephemeralRpc = new Connection(`${this.getMagicblockEphemeralRpc()}?token=${authToken}`, 'confirmed');
           const serverEata = await getAssociatedTokenAddress(new PublicKey(WSOL_DEVNET_MINT), this.serverWallet.publicKey);
           console.log('Polling ephemeral balance for wSOL...');
           for (let i = 0; i < 15; i++) {
@@ -1134,7 +1136,11 @@ class SolanaService {
 
       let connectionToSend;
       if (response.data.sendRpcEndpoint) {
-        connectionToSend = new Connection(response.data.sendRpcEndpoint, 'confirmed');
+        let endpoint = response.data.sendRpcEndpoint;
+        if ((endpoint.includes('tee.magicblock.app') || endpoint.includes('devnet.magicblock.app')) && !endpoint.includes('token=')) {
+          endpoint = `${endpoint}${endpoint.includes('?') ? '&' : '?'}token=${authToken}`;
+        }
+        connectionToSend = new Connection(endpoint, 'confirmed');
       } else if (response.data.sendTo) {
         if (response.data.sendTo === 'ephemeral') {
           throw new Error('MagicBlock requested ephemeral submission but did not provide an ephemeral RPC endpoint.');
