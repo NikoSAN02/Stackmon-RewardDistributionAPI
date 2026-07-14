@@ -1018,16 +1018,33 @@ class SolanaService {
       // For USDC, use the private balance API
       let ephemeralBalance;
       if (isWsol) {
-        const authToken = await this.getMagicblockAuthToken();
-        const ephemeralRpc = new Connection(`${this.getMagicblockEphemeralRpc()}?token=${authToken}`, 'confirmed');
+        // First check if the server's base wSOL ATA is actually delegated.
+        // If not delegated on the base chain, the TEE bank won't allow writing to it.
+        let isDelegated = false;
         const serverEata = await getAssociatedTokenAddress(new PublicKey(WSOL_DEVNET_MINT), this.serverWallet.publicKey);
         try {
-          const balRes = await ephemeralRpc.getTokenAccountBalance(serverEata);
-          ephemeralBalance = parseInt(balRes.value.amount, 10);
-          console.log(`Server ephemeral wSOL balance: ${ephemeralBalance / 1e9} wSOL`);
+          const accountInfo = await this.connection.getAccountInfo(serverEata);
+          if (accountInfo && accountInfo.owner.toBase58() === 'DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh') {
+            isDelegated = true;
+          }
         } catch (e) {
+          isDelegated = false;
+        }
+
+        if (isDelegated) {
+          const authToken = await this.getMagicblockAuthToken();
+          const ephemeralRpc = new Connection(`${this.getMagicblockEphemeralRpc()}?token=${authToken}`, 'confirmed');
+          try {
+            const balRes = await ephemeralRpc.getTokenAccountBalance(serverEata);
+            ephemeralBalance = parseInt(balRes.value.amount, 10);
+            console.log(`Server ephemeral wSOL balance: ${ephemeralBalance / 1e9} wSOL`);
+          } catch (e) {
+            ephemeralBalance = 0;
+            console.log(`Server ephemeral wSOL balance: 0 (EATA not found)`);
+          }
+        } else {
           ephemeralBalance = 0;
-          console.log(`Server ephemeral wSOL balance: 0 (EATA not found)`);
+          console.log(`Server wSOL ATA is not delegated. Ephemeral balance treated as 0.`);
         }
       } else {
         try {
@@ -1160,7 +1177,6 @@ class SolanaService {
         transaction.sign(this.serverWallet);
         signature = await connectionToSend.sendRawTransaction(transaction.serialize(), { skipPreflight: true });
       }
-
       // Confirm the transfer transaction
       const latestBlockHash = await connectionToSend.getLatestBlockhash();
       await connectionToSend.confirmTransaction({
@@ -1168,6 +1184,22 @@ class SolanaService {
         lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
         signature,
       });
+
+      // Verify that the transaction did not fail on-chain
+      try {
+        const txInfo = await connectionToSend.getTransaction(signature, {
+          commitment: 'confirmed',
+          maxSupportedTransactionVersion: 0
+        });
+        if (txInfo && txInfo.meta && txInfo.meta.err) {
+          throw new Error(`Transaction failed on-chain: ${JSON.stringify(txInfo.meta.err)}`);
+        }
+      } catch (checkErr) {
+        if (checkErr.message.includes('Transaction failed on-chain')) {
+          throw checkErr;
+        }
+        console.warn(`⚠️ Could not verify transaction status: ${checkErr.message}`);
+      }
 
       // Verify sender balance after transfer
       console.log('----------------------------------------');
