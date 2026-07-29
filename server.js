@@ -10,6 +10,7 @@ const { unityValidationMiddleware } = require('./middleware/unityValidation');
 const logger = require('./utils/logger');
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 const rewardController = new RewardController();
 const userStatsController = new UserStatsController();
