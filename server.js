@@ -78,8 +78,18 @@ app.use((req, res, next) => {
   next();
 });
 
-// Serve static demo files
-app.use(express.static('public'));
+// Unity clients call /api/* paths (e.g. /api/health). Strip the prefix so
+// both /x and /api/x are served by the same routes.
+app.use((req, res, next) => {
+  if (req.url === '/api' || req.url.startsWith('/api/')) {
+    req.url = req.url.slice('/api'.length) || '/';
+  }
+  next();
+});
+
+// PARKED FOR FUTURE (Solana/MagicBlock demo UI — DO NOT DELETE public/):
+// Static demo page disabled during ARC migration. To restore, uncomment:
+// app.use(express.static('public'));
 
 // Log incoming requests
 app.use((req, res, next) => {
@@ -111,9 +121,25 @@ app.get('/info', (req, res) => {
   });
 });
 
-// Serve browser demo page at root
+// API index (demo landing page parked in public/ for future Solana reuse)
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public/index.html'));
+  res.json({
+    name: 'StackMon Reward Distribution API',
+    chain: 'arc-testnet',
+    chainId: Number(process.env.ARC_CHAIN_ID) || 5042002,
+    endpoints: [
+      'GET /health',
+      'GET /info',
+      'GET /balance',
+      'POST /distribute',
+      'POST /distribute-normal',
+      'POST /distribute-batch',
+      'POST /recordUserData',
+      'PUT /recordUserData',
+      'POST /UpdateGameStats'
+    ],
+    note: 'All endpoints also available under /api/* (e.g. /api/health)'
+  });
 });
 
 // Get server wallet balance (ARC testnet USDC)
