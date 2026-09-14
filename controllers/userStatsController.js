@@ -2,20 +2,22 @@ const supabase = require('../utils/supabase');
 const Joi = require('joi');
 const logger = require('../utils/logger');
 
+// ARC migration: EVM addresses (0x + 40 hex). Solana base58 preserved in comment for future.
+// FUTURE (Solana): /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
+const evmAddressValidator = Joi.string().required().pattern(/^0x[a-fA-F0-9]{40}$/).messages({
+    'string.pattern.base': 'Invalid EVM address format (expected 0x + 40 hex chars)'
+});
+
 // Validation schema for recording user data
 const recordUserDataSchema = Joi.object({
-    walletAddress: Joi.string().required().pattern(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/).messages({
-        'string.pattern.base': 'Invalid Solana address format'
-    }),
+    walletAddress: evmAddressValidator,
     depositAmount: Joi.number().required().min(0),
     roomId: Joi.string().required()
 });
 
 // Validation schema for updating user data (legacy)
 const updateUserDataSchema = Joi.object({
-    walletAddress: Joi.string().required().pattern(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/).messages({
-        'string.pattern.base': 'Invalid Solana address format'
-    }),
+    walletAddress: evmAddressValidator,
     roomId: Joi.string().required(),
     transactionHash: Joi.string().allow(null, ''),
     rewards: Joi.number().min(0),
@@ -24,9 +26,7 @@ const updateUserDataSchema = Joi.object({
 
 // Validation schema for UpdateGameStats
 const updateGameStatsSchema = Joi.object({
-    walletAddress: Joi.string().required().pattern(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/).messages({
-        'string.pattern.base': 'Invalid Solana address format'
-    }),
+    walletAddress: evmAddressValidator,
     depositAmount: Joi.number().required().min(0),
     roomId: Joi.string().required(),
     rewards: Joi.number().min(0),

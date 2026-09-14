@@ -1,3 +1,8 @@
+/* ============================================================================
+ * DISABLED FOR ARC MIGRATION (kept for future reuse — DO NOT DELETE)
+ * Active chain path is now services/arcService.js (ARC testnet USDC, EVM).
+ * ============================================================================
+ */
 const {
   Connection,
   PublicKey,

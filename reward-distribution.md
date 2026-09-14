@@ -1,4 +1,14 @@
-# KillersArena Solana Reward Distribution API
+# KillersArena Reward Distribution API — ARC Blockchain testnet (USDC)
+
+> **Migration note (Sep 2026):** Active chain is now **ARC testnet** (EVM,
+> chain ID 5042002, USDC rewards via `services/arcService.js`). All
+> **Solana / MagicBlock private-payment logic is disabled but preserved**
+> (`services/tokenService.js`, `utils/solana.js`, commented block at the
+> bottom of `controllers/rewardController.js`) for future re-enablement.
+> Mainnet cutover = set `ARC_NETWORK=mainnet` + explicit RPC/chain ID/USDC.
+> Wallet addresses are now EVM (`0x` + 40 hex).
+
+# KillersArena Solana Reward Distribution API (legacy docs below)
 
 ## Overview
 

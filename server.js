@@ -89,10 +89,16 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Config info endpoint
+// Config info endpoint (ARC)
 app.get('/info', (req, res) => {
   res.json({
-    mint: process.env.TOKEN_MINT_ADDRESS || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+    chain: process.env.ARC_NETWORK || 'testnet',
+    chainId: Number(process.env.ARC_CHAIN_ID) || 5042002,
+    rpcUrl: process.env.ARC_RPC_URL || 'https://rpc.testnet.arc.io',
+    usdc: process.env.ARC_USDC_ADDRESS || '0x3600000000000000000000000000000000000000',
+    usdcDecimals: Number(process.env.ARC_USDC_DECIMALS) || 6,
+    explorer: 'https://testnet.arcscan.app',
+    // FUTURE (Solana): mint: process.env.TOKEN_MINT_ADDRESS
   });
 });
 
@@ -101,27 +107,32 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public/index.html'));
 });
 
-// Get server wallet balance
+// Get server wallet balance (ARC testnet USDC)
 app.get('/balance', unityValidationMiddleware, (req, res) => {
   rewardController.getBalance(req, res);
 });
 
-// Single reward distribution endpoint (Standard)
+// Single reward distribution endpoint (ARC USDC — standard)
+// FUTURE (Solana): previously Solana transferSol via tokenService
 app.post('/distribute-normal', unityValidationMiddleware, (req, res) => {
   rewardController.distributeReward(req, res);
 });
 
-// Single Magicblock reward distribution endpoint
+// Single reward distribution endpoint (ARC USDC — Unity clients calling
+// /distribute keep working; previously MagicBlock private transfer)
+// FUTURE (Solana/MagicBlock): restore distributeMagicblockReward PER logic
 app.post('/distribute', unityValidationMiddleware, (req, res) => {
   rewardController.distributeMagicblockReward(req, res);
 });
 
-// Single Magicblock reward distribution setup (multi-signature flow)
+// Single Magicblock reward distribution setup (DISABLED for ARC migration,
+// kept for future reuse — controller returns 410 Gone)
+// FUTURE: app.post('/distribute-private-setup', ...) → setupPrivateTransfer
 app.post('/distribute-private-setup', unityValidationMiddleware, (req, res) => {
   rewardController.distributePrivateSetup(req, res);
 });
 
-// Batch reward distribution endpoint
+// Batch reward distribution endpoint (ARC USDC)
 app.post('/distribute-batch', unityValidationMiddleware, (req, res) => {
   rewardController.distributeBatchRewards(req, res);
 });
@@ -186,9 +197,11 @@ process.on('uncaughtException', (error) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`Reward Distribution API server is running on port ${PORT}`);
-  console.log(`Network: ${process.env.SOLANA_NETWORK || 'devnet'}`);
-  console.log(`RPC URL: ${process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com'}`);
-  logger.info('Server started', { port: PORT, network: process.env.SOLANA_NETWORK || 'devnet' });
+  console.log(`Chain: ARC (${process.env.ARC_NETWORK || 'testnet'}, chainId ${process.env.ARC_CHAIN_ID || 5042002})`);
+  console.log(`RPC URL: ${process.env.ARC_RPC_URL || 'https://rpc.testnet.arc.io'}`);
+  console.log(`USDC: ${process.env.ARC_USDC_ADDRESS || '0x3600000000000000000000000000000000000000'}`);
+  // FUTURE (Solana): SOLANA_NETWORK / SOLANA_RPC_URL (see utils/solana.js — disabled)
+  logger.info('Server started', { port: PORT, chain: 'arc', network: process.env.ARC_NETWORK || 'testnet' });
 });
 
 module.exports = app;

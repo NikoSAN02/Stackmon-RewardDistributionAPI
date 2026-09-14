@@ -1,3 +1,12 @@
+/* ============================================================================
+ * DISABLED FOR ARC MIGRATION (kept for future reuse — DO NOT DELETE)
+ * ----------------------------------------------------------------------------
+ * This Solana / MagicBlock private-payments service is intentionally inactive.
+ * Active reward path is now services/arcService.js (ARC testnet USDC).
+ * To re-enable Solana in future: restore RewardController Solana methods
+ * (see bottom of controllers/rewardController.js) and routes in server.js.
+ * ============================================================================
+ */
 const {
   Transaction,
   sendAndConfirmTransaction,
