@@ -69,6 +69,15 @@ app.options('*', cors());
 // Parse JSON bodies
 app.use(express.json({ limit: '10mb' }));
 
+// Vercel: rewrites forward to /server.js, so Express may see req.url as
+// "/server.js/..." instead of the original path. Strip that prefix.
+app.use((req, res, next) => {
+  if (req.url === '/server.js' || req.url.startsWith('/server.js/')) {
+    req.url = req.url.slice('/server.js'.length) || '/';
+  }
+  next();
+});
+
 // Serve static demo files
 app.use(express.static('public'));
 
@@ -194,14 +203,16 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Reward Distribution API server is running on port ${PORT}`);
-  console.log(`Chain: ARC (${process.env.ARC_NETWORK || 'testnet'}, chainId ${process.env.ARC_CHAIN_ID || 5042002})`);
-  console.log(`RPC URL: ${process.env.ARC_RPC_URL || 'https://rpc.testnet.arc.io'}`);
-  console.log(`USDC: ${process.env.ARC_USDC_ADDRESS || '0x3600000000000000000000000000000000000000'}`);
-  // FUTURE (Solana): SOLANA_NETWORK / SOLANA_RPC_URL (see utils/solana.js — disabled)
-  logger.info('Server started', { port: PORT, chain: 'arc', network: process.env.ARC_NETWORK || 'testnet' });
-});
+// Start server (skipped on Vercel serverless — Vercel invokes the exported app)
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Reward Distribution API server is running on port ${PORT}`);
+    console.log(`Chain: ARC (${process.env.ARC_NETWORK || 'testnet'}, chainId ${process.env.ARC_CHAIN_ID || 5042002})`);
+    console.log(`RPC URL: ${process.env.ARC_RPC_URL || 'https://rpc.testnet.arc.io'}`);
+    console.log(`USDC: ${process.env.ARC_USDC_ADDRESS || '0x3600000000000000000000000000000000000000'}`);
+    // FUTURE (Solana): SOLANA_NETWORK / SOLANA_RPC_URL (see utils/solana.js — disabled)
+    logger.info('Server started', { port: PORT, chain: 'arc', network: process.env.ARC_NETWORK || 'testnet' });
+  });
+}
 
 module.exports = app;
